@@ -247,6 +247,7 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
 @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
 @keyframes glowPulse{0%,100%{opacity:.6}50%{opacity:1}}
 @keyframes slideInRight{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @keyframes slideInLeft{from{transform:translateX(-40px);opacity:0}to{transform:translateX(0);opacity:1}}
 @keyframes countUp{from{opacity:0}to{opacity:1}}
 .fadein{animation:fadeIn .35s ease forwards}
@@ -877,6 +878,51 @@ function drawDonut(segments) {
    ==================================================== */
 const SYS_PROMPT = `You are Alpha Assistant, an AI investing educator built into the Daily Alpha AI app. Respond in under 180 words. Use light markdown (**bold**, bullet lists). Be concrete and practical. Always end with a short disclaimer that this is educational only, not financial advice.`;
 
+async function fetchAIPicks() {
+  const today = new Date().toISOString().slice(0,10);
+  const cacheKey = 'da_ai_picks_' + today;
+  const cached = ls.getItem(cacheKey);
+  if (cached) { try { return JSON.parse(cached); } catch(e) {} }
+
+  if (!Keys.groq && !Keys.anthropic) return null;
+
+  const dateStr = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  const prompt = `Today is ${dateStr}. You are a market analyst. Pick exactly 3 US stocks or ETFs to buy today from the entire market — not from any fixed list. Base picks on current macro trends, sector momentum, earnings catalysts, and market themes as of today. Vary picks day to day. Return ONLY a valid JSON array, no other text:
+[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"One sentence why to buy today","confidence":85},...]
+Confidence is 55-96. Use real NYSE/NASDAQ tickers only.`;
+
+  try {
+    let raw = '';
+    if (Keys.groq) {
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions',{
+        method:'POST',
+        headers:{'content-type':'application/json','authorization':'Bearer '+Keys.groq},
+        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:400,temperature:0.9,
+          messages:[{role:'user',content:prompt}]})
+      });
+      const d = await res.json();
+      raw = d.choices?.[0]?.message?.content || '';
+    } else {
+      const res = await fetch('https://api.anthropic.com/v1/messages',{
+        method:'POST',
+        headers:{'content-type':'application/json','x-api-key':Keys.anthropic,
+          'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,
+          messages:[{role:'user',content:prompt}]})
+      });
+      const d = await res.json();
+      raw = (d.content||[]).map(b=>b.text).join('');
+    }
+    const match = raw.match(/\[[\s\S]*\]/);
+    if (!match) return null;
+    const picks = JSON.parse(match[0]).slice(0,3);
+    ls.setItem(cacheKey, JSON.stringify(picks));
+    // clean up old cache keys
+    for (let i=0;i<ls.length;i++){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
+    return picks;
+  } catch(e) { return null; }
+}
+
 async function callClaude(history) {
   // Use Groq if available (free), fall back to Anthropic
   if (Keys.groq) return callGroq(history);
@@ -1068,8 +1114,20 @@ function initHome() {
   }
   document.getElementById('home-recs').innerHTML = '<div style="display:flex;gap:10px;flex-direction:column">'+'<div class="skel" style="height:130px;border-radius:16px"></div>'.repeat(2)+'</div>';
   const holdingSyms = State.holdings.map(h=>h.symbol);
-  const toFetch = [...new Set([...INDEX_SYMS.map(i=>i.s),...holdingSyms,...REC_SYMS,...MOVER_SYMS.slice(0,10)])];
-  fetchQuotes(toFetch).then(qs=>{
+  const baseSyms = [...new Set([...INDEX_SYMS.map(i=>i.s),...holdingSyms,...MOVER_SYMS.slice(0,10)])];
+
+  // Get AI picks first (cached per day), then fetch quotes
+  const hasAI = Keys.groq || Keys.anthropic;
+  if (hasAI) {
+    document.getElementById('home-recs').innerHTML = '<div style="color:var(--text3);font-size:11px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> AI is selecting today\'s picks…</div>';
+  }
+
+  fetchAIPicks().then(aiPicks=>{
+    State.aiPicks = aiPicks;
+    const pickSyms = aiPicks ? aiPicks.map(p=>p.symbol) : REC_SYMS;
+    const toFetch = [...new Set([...baseSyms,...pickSyms])];
+    return fetchQuotes(toFetch);
+  }).then(qs=>{
     Object.assign(State.quotes, qs);
     renderHomePortfolio();
     renderHomeIndices();
@@ -1109,15 +1167,32 @@ function renderHomeIndices() {
 }
 
 function renderHomeRecs() {
-  const candidates = REC_SYMS.filter(s=>State.quotes[s]).map(s=>{
-    const q=State.quotes[s]; const info=SYMBOL_INFO[s];
-    const pct=q.dp??0;
-    const conf=Math.max(55,Math.min(96,Math.round(70+pct*5+(info.type==='etf'?8:0)+(s==='NVDA'?6:0))));
-    const p=q.c;
-    return {symbol:s,name:info.name,sector:info.sector,type:info.type,price:p,pct,conf,
-      entry:(p*.982).toFixed(2)+' – '+(p*1.012).toFixed(2),
-      target:(p*1.13).toFixed(2),stop:(p*.912).toFixed(2)};
-  }).sort((a,b)=>b.conf-a.conf).slice(0,3);
+  let candidates;
+  if (State.aiPicks && State.aiPicks.length) {
+    candidates = State.aiPicks.map(pick=>{
+      const q = State.quotes[pick.symbol];
+      const p = q ? q.c : null;
+      const pct = q ? (q.dp??0) : 0;
+      return {
+        symbol:pick.symbol, name:pick.name, sector:pick.sector,
+        price:p, pct, conf:pick.confidence,
+        rationale:pick.rationale,
+        entry: p ? (p*.982).toFixed(2)+' – '+(p*1.012).toFixed(2) : '—',
+        target: p ? (p*1.13).toFixed(2) : '—',
+        stop: p ? (p*.912).toFixed(2) : '—'
+      };
+    });
+  } else {
+    candidates = REC_SYMS.filter(s=>State.quotes[s]).map(s=>{
+      const q=State.quotes[s]; const info=SYMBOL_INFO[s]||{name:s,sector:'Market',type:'stock'};
+      const pct=q.dp??0;
+      const conf=Math.max(55,Math.min(96,Math.round(70+pct*5+(info.type==='etf'?8:0)+(s==='NVDA'?6:0))));
+      const p=q.c;
+      return {symbol:s,name:info.name,sector:info.sector,price:p,pct,conf,
+        entry:(p*.982).toFixed(2)+' – '+(p*1.012).toFixed(2),
+        target:(p*1.13).toFixed(2),stop:(p*.912).toFixed(2)};
+    }).sort((a,b)=>b.conf-a.conf).slice(0,3);
+  }
 
   const gradients=[
     'linear-gradient(135deg,rgba(0,212,255,0.12),rgba(0,85,255,0.06),rgba(10,10,24,0.98))',
@@ -1154,7 +1229,7 @@ function renderHomeRecs() {
         <div class="rec-metric"><div class="rec-metric-label">Target</div><div class="rec-metric-val" style="color:var(--green)">$${r.target}</div></div>
         <div class="rec-metric"><div class="rec-metric-label">Stop Loss</div><div class="rec-metric-val" style="color:var(--red)">$${r.stop}</div></div>
       </div>
-      <div class="rec-detail"><div class="rec-reasoning" id="rec-reason-${r.symbol}"><span style="color:var(--text3);font-size:12px">Tap to load AI reasoning…</span></div></div>
+      <div class="rec-detail"><div class="rec-reasoning" id="rec-reason-${r.symbol}">${r.rationale ? `<div style="color:var(--text2);font-size:12px;line-height:1.65">${r.rationale}</div>` : '<span style="color:var(--text3);font-size:12px">Tap to load AI reasoning…</span>'}</div></div>
     </div>`).join('') : '<div style="color:var(--text3);font-size:12px;padding:8px 0">No live picks available right now.</div>';
 
   // Animate confidence bars
@@ -1169,13 +1244,15 @@ function toggleRec(card, symbol, price) {
   const detail = card.querySelector('.rec-detail');
   const isOpen = detail.classList.contains('open');
   detail.classList.toggle('open');
-  if (!isOpen && Keys.anthropic) {
+  const hasKey = Keys.groq || Keys.anthropic;
+  if (!isOpen && hasKey) {
     const reasonEl = document.getElementById('rec-reason-'+symbol);
     if (reasonEl && !reasonEl.dataset.loaded) {
       reasonEl.dataset.loaded = '1';
       reasonEl.innerHTML = '<div class="dot-typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
       const context = State.userRisk ? ` The user has a ${State.userRisk} risk profile.` : '';
-      callClaude([{role:'user',content:`In 2-3 sentences, explain why ${symbol} at $${price.toFixed(2)} might be worth watching today for an investor.${context} Mention one specific factor (earnings, momentum, sector trend, or macro). Be direct and educational.`}])
+      const priceStr = price ? `at $${Number(price).toFixed(2)}` : '';
+      callClaude([{role:'user',content:`In 2-3 sentences, explain why ${symbol} ${priceStr} might be worth watching today for an investor.${context} Mention one specific factor (earnings, momentum, sector trend, or macro). Be direct and educational.`}])
         .then(text=>{ reasonEl.innerHTML = `<div style="color:var(--text2);font-size:12px;line-height:1.65">${formatMD(text)}</div>`; })
         .catch(e=>{ reasonEl.innerHTML = `<div style="color:var(--text3);font-size:11px">AI reasoning unavailable: ${e.message}</div>`; });
     }
