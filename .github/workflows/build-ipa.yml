@@ -24,6 +24,12 @@ jobs:
       - name: Install Capacitor + TypeScript
         run: npm install -g @capacitor/cli ts-node typescript
 
+      - name: Prepare web assets
+        run: mkdir -p www && cp index.html www/
+
+      - name: Init Capacitor
+        run: npx cap init "Daily Alpha AI" com.dailyalphaai.app --web-dir www
+
       - name: Add iOS platform
         run: npx cap add ios
 
