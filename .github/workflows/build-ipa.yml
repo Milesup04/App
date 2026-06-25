@@ -16,24 +16,19 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install dependencies
         run: npm install
 
-      - name: Install Capacitor CLI
-        run: npm install -g @capacitor/cli
+      - name: Install Capacitor + TypeScript
+        run: npm install -g @capacitor/cli ts-node typescript
 
       - name: Add iOS platform
-        run: |
-          npx cap init "Daily Alpha AI" com.dailyalphaai.app --web-dir . || true
-          npx cap add ios || true
+        run: npx cap add ios
 
       - name: Sync Capacitor
         run: npx cap sync ios
-
-      - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode.app
 
       - name: Build IPA (unsigned)
         run: |
@@ -45,16 +40,15 @@ jobs:
             -archivePath $RUNNER_TEMP/App.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
             archive
-          xcodebuild \
-            -exportArchive \
-            -archivePath $RUNNER_TEMP/App.xcarchive \
-            -exportOptionsPlist ../../export-options.plist \
-            -exportPath $RUNNER_TEMP/ipa \
-            CODE_SIGNING_ALLOWED=NO
+          mkdir -p $RUNNER_TEMP/ipa
+          cd $RUNNER_TEMP/App.xcarchive/Products/Applications
+          mkdir -p Payload
+          cp -r *.app Payload/
+          zip -r $RUNNER_TEMP/ipa/DailyAlphaAI.ipa Payload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
           name: DailyAlphaAI-iOS
-          path: ${{ runner.temp }}/ipa/*.ipa
+          path: ${{ runner.temp }}/ipa/DailyAlphaAI.ipa
           retention-days: 30
