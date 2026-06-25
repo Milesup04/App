@@ -885,11 +885,47 @@ async function fetchAIPicks() {
   if (cached) { try { return JSON.parse(cached); } catch(e) {} }
 
   if (!Keys.groq && !Keys.anthropic) return null;
+  if (!Keys.finnhub) return null;
+
+  // Fetch real news + broad market movers to give Groq actual data
+  const SCAN_SYMS = ['NVDA','MSFT','AAPL','GOOGL','AMZN','META','TSLA','AMD','AVGO','ARM',
+    'PLTR','COIN','MSTR','SMCI','RIVN','SNAP','UBER','LYFT','NFLX','DIS','JPM','GS','BAC',
+    'XOM','CVX','LLY','PFE','MRNA','ABBV','NKE','SBUX','MCD','COST','WMT','TGT',
+    'VOO','QQQ','SPY','GLD','IWM','XLK','XLE','XLF','ARKK'];
+
+  let newsLines = '';
+  let moverLines = '';
+  try {
+    const [newsRes, quotesRes] = await Promise.all([
+      fetch(`https://finnhub.io/api/v1/news?category=general&token=${Keys.finnhub}`),
+      Promise.allSettled(SCAN_SYMS.map(s=>
+        fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${Keys.finnhub}`).then(r=>r.json()).then(d=>({s,d}))
+      ))
+    ]);
+    if (newsRes.ok) {
+      const news = await newsRes.json();
+      newsLines = (news||[]).slice(0,15).map(n=>n.headline).join('\n');
+    }
+    const quotes = {};
+    quotesRes.forEach(r=>{ if(r.status==='fulfilled'&&r.value.d?.c) quotes[r.value.s]=r.value.d; });
+    const movers = Object.entries(quotes)
+      .map(([s,q])=>({s,pct:q.dp??0,price:q.c}))
+      .sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,20);
+    moverLines = movers.map(m=>`${m.s}: ${m.pct>0?'+':''}${m.pct.toFixed(2)}% @ $${m.price?.toFixed(2)}`).join('\n');
+  } catch(e) {}
 
   const dateStr = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
-  const prompt = `Today is ${dateStr}. You are a market analyst. Pick exactly 3 US stocks or ETFs to buy today from the entire market — not from any fixed list. Base picks on current macro trends, sector momentum, earnings catalysts, and market themes as of today. Vary picks day to day. Return ONLY a valid JSON array, no other text:
-[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"One sentence why to buy today","confidence":85},...]
-Confidence is 55-96. Use real NYSE/NASDAQ tickers only.`;
+  const prompt = `Today is ${dateStr}. You are a professional stock analyst. Use the real market data and news below to pick exactly 3 US stocks or ETFs to buy TODAY. Base your picks ONLY on what is actually moving and what the news is about — not generic advice.
+
+TODAY'S TOP MOVERS (live % change):
+${moverLines || 'unavailable'}
+
+TODAY'S MARKET NEWS HEADLINES:
+${newsLines || 'unavailable'}
+
+Instructions: Pick 3 stocks that are supported by BOTH the news AND price momentum above. Explain specifically WHY based on the headlines/moves shown. Return ONLY a valid JSON array, no other text:
+[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Specific reason tied to today's news or price move","confidence":85},...]
+Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
 
   try {
     let raw = '';
@@ -897,7 +933,7 @@ Confidence is 55-96. Use real NYSE/NASDAQ tickers only.`;
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions',{
         method:'POST',
         headers:{'content-type':'application/json','authorization':'Bearer '+Keys.groq},
-        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:400,temperature:0.9,
+        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:500,temperature:0.4,
           messages:[{role:'user',content:prompt}]})
       });
       const d = await res.json();
@@ -907,18 +943,17 @@ Confidence is 55-96. Use real NYSE/NASDAQ tickers only.`;
         method:'POST',
         headers:{'content-type':'application/json','x-api-key':Keys.anthropic,
           'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:400,
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:500,
           messages:[{role:'user',content:prompt}]})
       });
       const d = await res.json();
       raw = (d.content||[]).map(b=>b.text).join('');
     }
-    const match = raw.match(/\[[\s\S]*\]/);
+    const match = raw.match(/\[[\s\S]*?\]/);
     if (!match) return null;
     const picks = JSON.parse(match[0]).slice(0,3);
     ls.setItem(cacheKey, JSON.stringify(picks));
-    // clean up old cache keys
-    for (let i=0;i<ls.length;i++){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
+    for (let i=ls.length-1;i>=0;i--){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
     return picks;
   } catch(e) { return null; }
 }
@@ -1116,10 +1151,10 @@ function initHome() {
   const holdingSyms = State.holdings.map(h=>h.symbol);
   const baseSyms = [...new Set([...INDEX_SYMS.map(i=>i.s),...holdingSyms,...MOVER_SYMS.slice(0,10)])];
 
-  // Get AI picks first (cached per day), then fetch quotes
-  const hasAI = Keys.groq || Keys.anthropic;
+  // Get AI picks first (fetches its own news+quotes internally, cached per day)
+  const hasAI = (Keys.groq || Keys.anthropic) && Keys.finnhub;
   if (hasAI) {
-    document.getElementById('home-recs').innerHTML = '<div style="color:var(--text3);font-size:11px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> AI is selecting today\'s picks…</div>';
+    document.getElementById('home-recs').innerHTML = '<div style="color:var(--text3);font-size:11px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> Analysing today\'s news &amp; trends…</div>';
   }
 
   fetchAIPicks().then(aiPicks=>{
