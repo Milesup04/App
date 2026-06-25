@@ -261,10 +261,7 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
   <div id="notch"><div id="notch-camera"></div><div id="notch-speaker"></div></div>
   <div id="statusbar">
     <span id="clock" id="statusbar-time">9:41</span>
-    <div id="statusbar-icons" style="display:flex;gap:6px;align-items:center">
-      <svg width="16" height="12" viewBox="0 0 16 12" fill="white"><rect x="0" y="4" width="3" height="8" rx="1"/><rect x="4.5" y="2.5" width="3" height="9.5" rx="1"/><rect x="9" y="1" width="3" height="11" rx="1"/><rect x="13.5" y="0" width="2.5" height="12" rx="1" opacity=".3"/></svg>
-      <svg width="16" height="12" viewBox="0 0 24 18" fill="white"><path d="M12 4C7 4 2.5 6.5 0 10.5l2.5 2.5C4.5 9.5 8 7.5 12 7.5s7.5 2 9.5 5.5L24 10.5C21.5 6.5 17 4 12 4z" opacity=".4"/><path d="M12 9C8.5 9 5.5 10.5 3.5 13l2.5 2.5c1.5-2 3.5-3 6-3s4.5 1 6 3l2.5-2.5C18.5 10.5 15.5 9 12 9z" opacity=".7"/><circle cx="12" cy="18" r="2.5"/></svg>
-      <svg width="26" height="12" viewBox="0 0 26 12" fill="none"><rect x="0" y="1" width="23" height="10" rx="3" stroke="white" stroke-opacity=".35" stroke-width="1"/><rect x="1" y="2" width="18" height="8" rx="2" fill="white"/><path d="M24 4.5v3c.8-.4 1.3-1 1.3-1.5S24.8 4.9 24 4.5z" fill="white" opacity=".4"/></svg>
+    <div id="statusbar-icons" style="display:flex;gap:6px;align-items:center;color:rgba(255,255,255,0.8);font-size:12px;font-weight:600">
     </div>
   </div>
   <div id="screen-wrap">
@@ -576,6 +573,26 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
         <div class="key-row">
           <div class="key-header">
             <div class="key-info">
+              <div class="key-icon" style="background:rgba(255,140,0,0.14)">⚡</div>
+              <div>
+                <div class="key-label">Groq <span class="pill green" style="font-size:9px;margin-left:4px">FREE</span></div>
+                <div class="key-status" id="groq-status" style="color:var(--gold)">○ Not set · console.groq.com</div>
+              </div>
+            </div>
+            <button class="key-edit-btn" id="groq-btn" onclick="toggleKeyForm('groq')">Add Key</button>
+          </div>
+          <div class="key-form" id="groq-form">
+            <input class="key-input" id="groq-input" type="password" placeholder="gsk_…"/>
+            <div class="key-actions">
+              <button class="key-save" style="background:linear-gradient(135deg,#FF8C00,#FF4500)" onclick="saveKey('groq')">Save</button>
+              <button class="key-remove" id="groq-remove" style="display:none" onclick="removeKey('groq')">Remove</button>
+            </div>
+            <div class="key-hint">100% free at console.groq.com — no credit card needed. Uses Llama 3.3 70B. Faster than paid alternatives.</div>
+          </div>
+        </div>
+        <div class="key-row">
+          <div class="key-header">
+            <div class="key-info">
               <div class="key-icon" style="background:rgba(191,90,242,0.14)">✨</div>
               <div>
                 <div class="key-label">Anthropic (Claude)</div>
@@ -590,7 +607,7 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
               <button class="key-save purple" onclick="saveKey('an')">Save</button>
               <button class="key-remove" id="an-remove" style="display:none" onclick="removeKey('an')">Remove</button>
             </div>
-            <div class="key-hint">Key stored only in your browser — never shared. Get it at console.anthropic.com. Powers AI chat & pick reasoning.</div>
+            <div class="key-hint">Paid. Get it at console.anthropic.com. If Groq key is also set, Groq is used instead.</div>
           </div>
         </div>
       </div>
@@ -678,6 +695,8 @@ const Keys = {
   set finnhub(v){ ls.setItem('da_fh',v) },
   get anthropic(){ return ls.getItem('da_an')||'' },
   set anthropic(v){ ls.setItem('da_an',v) },
+  get groq(){ return ls.getItem('da_groq')||'' },
+  set groq(v){ ls.setItem('da_groq',v) },
 };
 
 const DEFAULT_HOLDINGS = [
@@ -859,6 +878,8 @@ function drawDonut(segments) {
 const SYS_PROMPT = `You are Alpha Assistant, an AI investing educator built into the Daily Alpha AI app. Respond in under 180 words. Use light markdown (**bold**, bullet lists). Be concrete and practical. Always end with a short disclaimer that this is educational only, not financial advice.`;
 
 async function callClaude(history) {
+  // Use Groq if available (free), fall back to Anthropic
+  if (Keys.groq) return callGroq(history);
   const key = Keys.anthropic;
   if (!key) throw new Error('NO_KEY');
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -880,6 +901,29 @@ async function callClaude(history) {
   }
   const data = await res.json();
   return (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+}
+
+async function callGroq(history) {
+  const key = Keys.groq;
+  if (!key) throw new Error('NO_KEY');
+  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method:'POST',
+    headers:{
+      'content-type':'application/json',
+      'authorization':'Bearer '+key,
+    },
+    body:JSON.stringify({
+      model:'llama-3.3-70b-versatile',
+      max_tokens:600,
+      messages:[{role:'system',content:SYS_PROMPT},...history],
+    })
+  });
+  if (!res.ok) {
+    const e = await res.json().catch(()=>({}));
+    throw new Error(e?.error?.message||'HTTP '+res.status);
+  }
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
 }
 
 /* ====================================================
@@ -1491,9 +1535,10 @@ function fetchHealthInsight() {
    AI CHAT
    ==================================================== */
 function initAI() {
-  const hasKey = !!Keys.anthropic;
+  const hasKey = !!(Keys.groq || Keys.anthropic);
+  const provider = Keys.groq ? 'Groq (Llama 3.3)' : 'Claude';
   document.getElementById('ai-dot').style.background = hasKey ? 'var(--green)' : 'var(--gold)';
-  document.getElementById('ai-status').textContent = hasKey ? 'Powered by Claude · Educational mode' : 'Setup needed · Add Anthropic key';
+  document.getElementById('ai-status').textContent = hasKey ? `Powered by ${provider} · Educational mode` : 'Setup needed · Add Groq key (free)';
   setupBanner('ai-setup-banner', hasKey ? [] : ['anthropic']);
   document.getElementById('chat-empty-sub').textContent = hasKey
     ? 'Powered by Claude AI. Ask me anything about investing, stocks, ETFs, or strategy.'
@@ -1566,10 +1611,10 @@ async function sendChat() {
   State.chatHistory.push({role:'user', content:msg});
   const aiId = 'ai-'+Date.now();
   const aiBub = addBubble('assistant', '<div class="dot-typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>', aiId);
-  if (!Keys.anthropic) {
+  if (!Keys.groq && !Keys.anthropic) {
     await sleep(700);
-    typeText(aiBub, 'Please add an Anthropic API key in **Settings** to use the AI chat. Once added, I can answer any investing question you have!');
-    State.chatHistory.push({role:'assistant', content:'Please add an Anthropic API key.'});
+    typeText(aiBub, 'Please add a **Groq key** (free!) or Anthropic key in **Settings** to use AI chat. Get a free Groq key at console.groq.com — no credit card needed!');
+    State.chatHistory.push({role:'assistant', content:'Please add a Groq or Anthropic key.'});
     State.chatStreaming = false; chatInputChange(); return;
   }
   try {
@@ -1642,6 +1687,13 @@ function updateKeyStatus() {
   document.getElementById('an-btn').textContent = anKey ? 'Edit' : 'Add Key';
   document.getElementById('an-remove').style.display = anKey ? 'block' : 'none';
   if (!document.getElementById('an-input').value) document.getElementById('an-input').value = anKey;
+
+  const groqKey = Keys.groq;
+  document.getElementById('groq-status').textContent = groqKey ? '● Connected · Free AI active' : '○ Not set · console.groq.com';
+  document.getElementById('groq-status').style.color = groqKey ? 'var(--green)' : 'var(--gold)';
+  document.getElementById('groq-btn').textContent = groqKey ? 'Edit' : 'Add Key';
+  document.getElementById('groq-remove').style.display = groqKey ? 'block' : 'none';
+  if (!document.getElementById('groq-input').value) document.getElementById('groq-input').value = groqKey;
 }
 
 function toggleKeyForm(type) {
@@ -1651,17 +1703,20 @@ function toggleKeyForm(type) {
 function saveKey(type) {
   const val = document.getElementById(type+'-input').value.trim();
   if (type==='fh') Keys.finnhub = val;
+  else if (type==='groq') Keys.groq = val;
   else Keys.anthropic = val;
   updateKeyStatus();
-  showToast(type==='fh' ? '✓ Finnhub key saved — live data now active' : '✓ Anthropic key saved — AI features unlocked');
+  const msgs = {fh:'✓ Finnhub key saved — live data now active', groq:'✓ Groq key saved — free AI now active', an:'✓ Anthropic key saved — AI features unlocked'};
+  showToast(msgs[type]);
   document.getElementById(type+'-form').classList.remove('open');
 }
 
 function removeKey(type) {
   if (type==='fh') { Keys.finnhub=''; document.getElementById('fh-input').value=''; }
+  else if (type==='groq') { Keys.groq=''; document.getElementById('groq-input').value=''; }
   else { Keys.anthropic=''; document.getElementById('an-input').value=''; }
   updateKeyStatus();
-  showToast((type==='fh'?'Finnhub':'Anthropic')+' key removed');
+  showToast((type==='fh'?'Finnhub':type==='groq'?'Groq':'Anthropic')+' key removed');
 }
 
 const toggleStates = {notif:true, daily:true, market:true};
