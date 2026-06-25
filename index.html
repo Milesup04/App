@@ -887,44 +887,79 @@ async function fetchAIPicks() {
   if (!Keys.groq && !Keys.anthropic) return null;
   if (!Keys.finnhub) return null;
 
-  // Fetch real news + broad market movers to give Groq actual data
   const SCAN_SYMS = ['NVDA','MSFT','AAPL','GOOGL','AMZN','META','TSLA','AMD','AVGO','ARM',
     'PLTR','COIN','MSTR','SMCI','RIVN','SNAP','UBER','LYFT','NFLX','DIS','JPM','GS','BAC',
     'XOM','CVX','LLY','PFE','MRNA','ABBV','NKE','SBUX','MCD','COST','WMT','TGT',
     'VOO','QQQ','SPY','GLD','IWM','XLK','XLE','XLF','ARKK'];
 
   let newsLines = '';
+  let trendLines = '';
   let moverLines = '';
+
   try {
+    // Fetch news + quotes in parallel
     const [newsRes, quotesRes] = await Promise.all([
       fetch(`https://finnhub.io/api/v1/news?category=general&token=${Keys.finnhub}`),
       Promise.allSettled(SCAN_SYMS.map(s=>
         fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${Keys.finnhub}`).then(r=>r.json()).then(d=>({s,d}))
       ))
     ]);
+
     if (newsRes.ok) {
       const news = await newsRes.json();
       newsLines = (news||[]).slice(0,15).map(n=>n.headline).join('\n');
     }
+
     const quotes = {};
-    quotesRes.forEach(r=>{ if(r.status==='fulfilled'&&r.value.d?.c) quotes[r.value.s]=r.value.d; });
+    quotesRes.forEach(r=>{ if(r.status==='fulfilled'&&r.value?.d?.c) quotes[r.value.s]=r.value.d; });
     const movers = Object.entries(quotes)
-      .map(([s,q])=>({s,pct:q.dp??0,price:q.c}))
+      .map(([s,q])=>({s,pct:q.dp??0,price:q.c,prevClose:q.pc}))
       .sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,20);
     moverLines = movers.map(m=>`${m.s}: ${m.pct>0?'+':''}${m.pct.toFixed(2)}% @ $${m.price?.toFixed(2)}`).join('\n');
+
+    // Fetch 30-day candles for top 15 movers to compute trend data
+    const toScan = movers.slice(0,15).map(m=>m.s);
+    const nowTs = Math.floor(Date.now()/1000);
+    const fromTs = nowTs - 30*24*3600;
+    const candleResults = await Promise.allSettled(toScan.map(s=>
+      fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${s}&resolution=D&from=${fromTs}&to=${nowTs}&token=${Keys.finnhub}`)
+        .then(r=>r.json()).then(d=>({s,d}))
+    ));
+
+    const trendData = [];
+    candleResults.forEach(r=>{
+      if(r.status!=='fulfilled') return;
+      const {s,d} = r.value;
+      if(!d||d.s==='no_data'||!d.c||d.c.length<5) return;
+      const closes = d.c;
+      const first = closes[0], last = closes[closes.length-1];
+      const change30d = ((last-first)/first*100).toFixed(1);
+      // Simple moving average (last 10 days)
+      const ma10 = closes.slice(-10).reduce((a,b)=>a+b,0)/Math.min(10,closes.length);
+      const aboveMa = last > ma10 ? 'above' : 'below';
+      // Count up days vs down days
+      let upDays=0, downDays=0;
+      for(let i=1;i<closes.length;i++){ closes[i]>closes[i-1]?upDays++:downDays++; }
+      const momentum = upDays>downDays*1.5?'strong uptrend':downDays>upDays*1.5?'strong downtrend':upDays>downDays?'mild uptrend':'mild downtrend';
+      trendData.push({s, change30d, aboveMa, momentum});
+    });
+    trendLines = trendData.map(t=>`${t.s}: 30d ${t.change30d>0?'+':''}${t.change30d}%, ${t.momentum}, price ${t.aboveMa} 10-day avg`).join('\n');
   } catch(e) {}
 
   const dateStr = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
-  const prompt = `Today is ${dateStr}. You are a professional stock analyst. Use the real market data and news below to pick exactly 3 US stocks or ETFs to buy TODAY. Base your picks ONLY on what is actually moving and what the news is about — not generic advice.
+  const prompt = `Today is ${dateStr}. You are a professional stock analyst. Use the real market data and news below to pick exactly 3 US stocks or ETFs to buy TODAY.
 
 TODAY'S TOP MOVERS (live % change):
 ${moverLines || 'unavailable'}
 
+30-DAY TREND ANALYSIS:
+${trendLines || 'unavailable'}
+
 TODAY'S MARKET NEWS HEADLINES:
 ${newsLines || 'unavailable'}
 
-Instructions: Pick 3 stocks that are supported by BOTH the news AND price momentum above. Explain specifically WHY based on the headlines/moves shown. Return ONLY a valid JSON array, no other text:
-[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Specific reason tied to today's news or price move","confidence":85},...]
+Instructions: Pick 3 stocks supported by the news AND showing positive momentum in the trend data. For each pick analyse the trend and state how long an investor should hold it (e.g. "1–3 days", "1–2 weeks", "1–3 months", "6–12 months") based on the trend strength and news catalyst. Return ONLY a valid JSON array, no other text:
+[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Specific reason tied to today's news and trend data","trend":"e.g. Strong 30-day uptrend, above 10-day moving average","holdPeriod":"e.g. 1–2 weeks","holdReason":"Why that timeframe","confidence":85},...]
 Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
 
   try {
@@ -933,7 +968,7 @@ Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions',{
         method:'POST',
         headers:{'content-type':'application/json','authorization':'Bearer '+Keys.groq},
-        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:500,temperature:0.4,
+        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:700,temperature:0.4,
           messages:[{role:'user',content:prompt}]})
       });
       const d = await res.json();
@@ -943,7 +978,7 @@ Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
         method:'POST',
         headers:{'content-type':'application/json','x-api-key':Keys.anthropic,
           'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:500,
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,
           messages:[{role:'user',content:prompt}]})
       });
       const d = await res.json();
@@ -1212,6 +1247,9 @@ function renderHomeRecs() {
         symbol:pick.symbol, name:pick.name, sector:pick.sector,
         price:p, pct, conf:pick.confidence,
         rationale:pick.rationale,
+        trend:pick.trend||'',
+        holdPeriod:pick.holdPeriod||'',
+        holdReason:pick.holdReason||'',
         entry: p ? (p*.982).toFixed(2)+' – '+(p*1.012).toFixed(2) : '—',
         target: p ? (p*1.13).toFixed(2) : '—',
         stop: p ? (p*.912).toFixed(2) : '—'
@@ -1259,6 +1297,14 @@ function renderHomeRecs() {
         <span style="color:${cCol(r.conf)};font-size:11px;font-weight:700">${r.conf}%</span>
       </div>
       <div class="conf-bar"><div class="conf-fill" style="width:0%;background:${cCol(r.conf)}" data-target="${r.conf}"></div></div>
+      ${r.holdPeriod ? `<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;padding:7px 10px;background:rgba(255,184,0,0.08);border:1px solid rgba(255,184,0,0.18);border-radius:10px">
+        <span style="font-size:15px">⏱</span>
+        <div>
+          <div style="color:var(--gold);font-size:11px;font-weight:700">Hold: ${r.holdPeriod}</div>
+          ${r.holdReason?`<div style="color:var(--text3);font-size:10px;margin-top:1px">${r.holdReason}</div>`:''}
+        </div>
+      </div>` : ''}
+      ${r.trend ? `<div style="color:var(--text3);font-size:10px;margin-bottom:7px;padding:5px 8px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border)">📈 ${r.trend}</div>` : ''}
       <div class="rec-metrics">
         <div class="rec-metric"><div class="rec-metric-label">Entry Zone</div><div class="rec-metric-val">$${r.entry}</div></div>
         <div class="rec-metric"><div class="rec-metric-label">Target</div><div class="rec-metric-val" style="color:var(--green)">$${r.target}</div></div>
