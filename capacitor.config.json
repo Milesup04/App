@@ -1,7 +1,7 @@
 {
   "appId": "com.dailyalphaai.app",
   "appName": "Daily Alpha AI",
-  "webDir": ".",
+  "we "webDir": "www"
   "server": { "androidScheme": "https" },
   "plugins": {
     "SplashScreen": { "launchShowDuration": 1500, "launchAutoHide": true, "backgroundColor": "#050510", "showSpinner": false },
