@@ -36,15 +36,24 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync ios
 
+      - name: Install CocoaPods
+        run: sudo gem install cocoapods
+
+      - name: Pod install
+        run: cd ios/App && pod install
+
       - name: Build IPA (unsigned)
         run: |
           cd ios/App
           xcodebuild \
+            -workspace App.xcworkspace \
             -scheme App \
             -configuration Release \
             -sdk iphoneos \
             -archivePath $RUNNER_TEMP/App.xcarchive \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
             archive
           mkdir -p $RUNNER_TEMP/ipa
           cd $RUNNER_TEMP/App.xcarchive/Products/Applications
