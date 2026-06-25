@@ -887,80 +887,123 @@ async function fetchAIPicks() {
   if (!Keys.groq && !Keys.anthropic) return null;
   if (!Keys.finnhub) return null;
 
-  const SCAN_SYMS = ['NVDA','MSFT','AAPL','GOOGL','AMZN','META','TSLA','AMD','AVGO','ARM',
-    'PLTR','COIN','MSTR','SMCI','RIVN','SNAP','UBER','LYFT','NFLX','DIS','JPM','GS','BAC',
-    'XOM','CVX','LLY','PFE','MRNA','ABBV','NKE','SBUX','MCD','COST','WMT','TGT',
-    'VOO','QQQ','SPY','GLD','IWM','XLK','XLE','XLF','ARKK'];
+  // Wide scan list — 80 stocks across all major sectors
+  const SCAN_SYMS = [
+    // Mega-cap tech
+    'NVDA','MSFT','AAPL','GOOGL','AMZN','META','TSLA','AMD','AVGO','ARM','INTC','ORCL','CRM','ADBE','QCOM',
+    // High-momentum / speculative
+    'PLTR','COIN','MSTR','SMCI','RIVN','SNAP','RBLX','HOOD','SOFI','IONQ','RGTI',
+    // Consumer & retail
+    'UBER','LYFT','NFLX','DIS','SBUX','MCD','COST','WMT','TGT','AMZN','NKE','ABNB',
+    // Finance
+    'JPM','GS','BAC','MS','V','MA','PYPL','SQ','NU',
+    // Healthcare & biotech
+    'LLY','PFE','MRNA','ABBV','JNJ','ISRG','DXCM',
+    // Energy
+    'XOM','CVX','OXY','SLB',
+    // Industrial / defence
+    'RTX','LMT','NOC','CAT','DE',
+    // ETFs for macro reads
+    'SPY','QQQ','IWM','GLD','TLT','XLK','XLE','XLF','ARKK','SOXL'
+  ];
 
   let newsLines = '';
-  let trendLines = '';
   let moverLines = '';
+  let trendLines = '';
+  let recLines = '';
 
   try {
-    // Fetch news + quotes in parallel
+    // Step 1: news + all quotes in parallel
     const [newsRes, quotesRes] = await Promise.all([
       fetch(`https://finnhub.io/api/v1/news?category=general&token=${Keys.finnhub}`),
       Promise.allSettled(SCAN_SYMS.map(s=>
-        fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${Keys.finnhub}`).then(r=>r.json()).then(d=>({s,d}))
+        fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${Keys.finnhub}`)
+          .then(r=>r.json()).then(d=>({s,d}))
       ))
     ]);
 
     if (newsRes.ok) {
       const news = await newsRes.json();
-      newsLines = (news||[]).slice(0,15).map(n=>n.headline).join('\n');
+      newsLines = (news||[]).slice(0,20).map(n=>n.headline).join('\n');
     }
 
     const quotes = {};
     quotesRes.forEach(r=>{ if(r.status==='fulfilled'&&r.value?.d?.c) quotes[r.value.s]=r.value.d; });
-    const movers = Object.entries(quotes)
-      .map(([s,q])=>({s,pct:q.dp??0,price:q.c,prevClose:q.pc}))
-      .sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,20);
-    moverLines = movers.map(m=>`${m.s}: ${m.pct>0?'+':''}${m.pct.toFixed(2)}% @ $${m.price?.toFixed(2)}`).join('\n');
 
-    // Fetch 30-day candles for top 15 movers to compute trend data
-    const toScan = movers.slice(0,15).map(m=>m.s);
+    // Score each stock: weight today's % move + volume ratio
+    const scored = Object.entries(quotes).map(([s,q])=>{
+      const pct = q.dp??0;
+      const volRatio = q.v&&q.av ? q.v/q.av : 1; // today vs avg volume
+      const score = Math.abs(pct)*0.6 + Math.min(volRatio,3)*0.4*10;
+      return {s, pct, price:q.c, score, volRatio};
+    }).sort((a,b)=>b.score-a.score);
+
+    // Top 50 by score → these are Finnhub's most active/notable stocks today
+    const top50 = scored.slice(0,50);
+    moverLines = top50.map(m=>`${m.s}: ${m.pct>0?'+':''}${m.pct.toFixed(2)}% | vol ratio ${m.volRatio.toFixed(1)}x avg | $${m.price?.toFixed(2)}`).join('\n');
+
+    // Step 2: fetch analyst recommendations for top 30
+    const top30syms = top50.slice(0,30).map(m=>m.s).filter(s=>!s.match(/^(SPY|QQQ|IWM|GLD|TLT|XL[A-Z]|ARKK|SOXL)$/));
+    const recResults = await Promise.allSettled(top30syms.map(s=>
+      fetch(`https://finnhub.io/api/v1/stock/recommendation?symbol=${s}&token=${Keys.finnhub}`)
+        .then(r=>r.json()).then(d=>({s,d}))
+    ));
+    const recMap = {};
+    recResults.forEach(r=>{
+      if(r.status!=='fulfilled') return;
+      const {s,d} = r.value;
+      const latest = Array.isArray(d) ? d[0] : null;
+      if(latest) recMap[s] = latest;
+    });
+    recLines = Object.entries(recMap).map(([s,rec])=>
+      `${s}: strongBuy=${rec.strongBuy} buy=${rec.buy} hold=${rec.hold} sell=${rec.sell} strongSell=${rec.strongSell}`
+    ).join('\n');
+
+    // Step 3: fetch 30-day candles for top 15 non-ETF movers
+    const candleSyms = top50.filter(m=>!m.s.match(/^(SPY|QQQ|IWM|GLD|TLT|XL[A-Z]|ARKK|SOXL)$/)).slice(0,15).map(m=>m.s);
     const nowTs = Math.floor(Date.now()/1000);
-    const fromTs = nowTs - 30*24*3600;
-    const candleResults = await Promise.allSettled(toScan.map(s=>
+    const fromTs = nowTs - 45*24*3600;
+    const candleRes = await Promise.allSettled(candleSyms.map(s=>
       fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${s}&resolution=D&from=${fromTs}&to=${nowTs}&token=${Keys.finnhub}`)
         .then(r=>r.json()).then(d=>({s,d}))
     ));
-
     const trendData = [];
-    candleResults.forEach(r=>{
+    candleRes.forEach(r=>{
       if(r.status!=='fulfilled') return;
       const {s,d} = r.value;
       if(!d||d.s==='no_data'||!d.c||d.c.length<5) return;
       const closes = d.c;
-      const first = closes[0], last = closes[closes.length-1];
-      const change30d = ((last-first)/first*100).toFixed(1);
-      // Simple moving average (last 10 days)
+      const change30d = ((closes[closes.length-1]-closes[0])/closes[0]*100).toFixed(1);
       const ma10 = closes.slice(-10).reduce((a,b)=>a+b,0)/Math.min(10,closes.length);
-      const aboveMa = last > ma10 ? 'above' : 'below';
-      // Count up days vs down days
-      let upDays=0, downDays=0;
+      const ma30 = closes.reduce((a,b)=>a+b,0)/closes.length;
+      const last = closes[closes.length-1];
+      let upDays=0,downDays=0;
       for(let i=1;i<closes.length;i++){ closes[i]>closes[i-1]?upDays++:downDays++; }
-      const momentum = upDays>downDays*1.5?'strong uptrend':downDays>upDays*1.5?'strong downtrend':upDays>downDays?'mild uptrend':'mild downtrend';
-      trendData.push({s, change30d, aboveMa, momentum});
+      const momentum = upDays>downDays*1.5?'strong uptrend':downDays>upDays*1.5?'downtrend':upDays>downDays?'mild uptrend':'sideways';
+      const maStatus = last>ma10&&last>ma30?'above both MAs':last>ma10?'above MA10':last<ma10&&last<ma30?'below both MAs':'mixed';
+      trendData.push(`${s}: 30d ${change30d>0?'+':''}${change30d}%, ${momentum}, ${maStatus}`);
     });
-    trendLines = trendData.map(t=>`${t.s}: 30d ${t.change30d>0?'+':''}${t.change30d}%, ${t.momentum}, price ${t.aboveMa} 10-day avg`).join('\n');
+    trendLines = trendData.join('\n');
   } catch(e) {}
 
   const dateStr = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
-  const prompt = `Today is ${dateStr}. You are a professional stock analyst. Use the real market data and news below to pick exactly 3 US stocks or ETFs to buy TODAY.
+  const prompt = `Today is ${dateStr}. You are a senior portfolio strategist. Finnhub has surfaced the following 50 stocks as today's most notable based on price movement and volume. Your job is to strategically analyse all of this data and select the best 3 to buy today.
 
-TODAY'S TOP MOVERS (live % change):
+FINNHUB TOP 50 TODAY (% change | volume vs avg | price):
 ${moverLines || 'unavailable'}
 
-30-DAY TREND ANALYSIS:
+WALL STREET ANALYST RECOMMENDATIONS (strongBuy/buy/hold/sell/strongSell counts):
+${recLines || 'unavailable'}
+
+30-DAY TREND ANALYSIS (momentum & moving averages):
 ${trendLines || 'unavailable'}
 
-TODAY'S MARKET NEWS HEADLINES:
+TODAY'S MARKET NEWS:
 ${newsLines || 'unavailable'}
 
-Instructions: Pick 3 stocks supported by the news AND showing positive momentum in the trend data. For each pick analyse the trend and state how long an investor should hold it (e.g. "1–3 days", "1–2 weeks", "1–3 months", "6–12 months") based on the trend strength and news catalyst. Return ONLY a valid JSON array, no other text:
-[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Specific reason tied to today's news and trend data","trend":"e.g. Strong 30-day uptrend, above 10-day moving average","holdPeriod":"e.g. 1–2 weeks","holdReason":"Why that timeframe","confidence":85},...]
-Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
+Choose 3 stocks where: (1) analyst recommendations lean bullish, (2) trend momentum is positive, (3) a news catalyst supports the move. Recommend a hold period based on trend strength. Return ONLY a valid JSON array, no other text:
+[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Why this stock now, citing analyst data and trend","trend":"Trend summary from the data above","holdPeriod":"e.g. 1–2 weeks","holdReason":"Why that timeframe based on trend","confidence":85},...]
+Confidence 55-96. Tickers must come from the Finnhub top 50 list above.`;
 
   try {
     let raw = '';
@@ -968,7 +1011,7 @@ Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions',{
         method:'POST',
         headers:{'content-type':'application/json','authorization':'Bearer '+Keys.groq},
-        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:700,temperature:0.4,
+        body:JSON.stringify({model:'llama-3.3-70b-versatile',max_tokens:800,temperature:0.3,
           messages:[{role:'user',content:prompt}]})
       });
       const d = await res.json();
@@ -978,7 +1021,7 @@ Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
         method:'POST',
         headers:{'content-type':'application/json','x-api-key':Keys.anthropic,
           'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:700,
+        body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:800,
           messages:[{role:'user',content:prompt}]})
       });
       const d = await res.json();
@@ -988,7 +1031,7 @@ Confidence 55-96. Real NYSE/NASDAQ tickers only.`;
     if (!match) return null;
     const picks = JSON.parse(match[0]).slice(0,3);
     ls.setItem(cacheKey, JSON.stringify(picks));
-    for (let i=ls.length-1;i>=0;i--){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
+    for(let i=ls.length-1;i>=0;i--){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
     return picks;
   } catch(e) { return null; }
 }
