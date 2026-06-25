@@ -1,0 +1,109 @@
+name: Build iOS IPA
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Capacitor CLI
+        run: npm install -g @capacitor/cli
+
+      - name: Init Capacitor (if not already done)
+        run: |
+          if [ ! -f "ios/App/App.xcodeproj/project.pbxproj" ]; then
+            npx cap init "Daily Alpha AI" com.dailyalphaai.app --web-dir . || true
+            npx cap add ios
+          fi
+
+      - name: Sync Capacitor
+        run: npx cap sync ios
+
+      - name: Select Xcode version
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build IPA (unsigned — for AltStore/sideloading)
+        run: |
+          cd ios/App
+          xcodebuild \
+            -scheme App \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath $RUNNER_TEMP/App.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath $RUNNER_TEMP/App.xcarchive \
+            -exportOptionsPlist ../../export-options.plist \
+            -exportPath $RUNNER_TEMP/ipa \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DailyAlphaAI-iOS
+          path: ${{ runner.temp }}/ipa/*.ipa
+          retention-days: 30
+
+  # Optional job: signed build for TestFlight
+  # Uncomment and add these GitHub Secrets to use:
+  #   APPLE_CERTIFICATE_BASE64  (base64 of your .p12 file)
+  #   APPLE_CERTIFICATE_PASSWORD
+  #   APPLE_PROVISIONING_PROFILE_BASE64
+  #   APPLE_TEAM_ID
+  #   KEYCHAIN_PASSWORD  (any random password)
+  #
+  # build-ios-signed:
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: '20' }
+  #     - run: npm install
+  #     - run: npm install -g @capacitor/cli
+  #     - run: npx cap add ios || true
+  #     - run: npx cap sync ios
+  #     - name: Import signing cert
+  #       run: |
+  #         echo "${{ secrets.APPLE_CERTIFICATE_BASE64 }}" | base64 --decode > cert.p12
+  #         security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+  #         security default-keychain -s build.keychain
+  #         security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+  #         security import cert.p12 -k build.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+  #         security set-key-partition-list -S apple-tool:,apple: -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
+  #     - name: Install provisioning profile
+  #       run: |
+  #         echo "${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}" | base64 --decode > profile.mobileprovision
+  #         mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+  #         cp profile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+  #     - name: Build signed IPA
+  #       run: |
+  #         cd ios/App
+  #         xcodebuild -scheme App -configuration Release -sdk iphoneos \
+  #           -archivePath $RUNNER_TEMP/App.xcarchive \
+  #           DEVELOPMENT_TEAM="${{ secrets.APPLE_TEAM_ID }}" archive
+  #         xcodebuild -exportArchive \
+  #           -archivePath $RUNNER_TEMP/App.xcarchive \
+  #           -exportOptionsPlist ../../export-options-signed.plist \
+  #           -exportPath $RUNNER_TEMP/ipa
+  #     - uses: actions/upload-artifact@v4
+  #       with:
+  #         name: DailyAlphaAI-iOS-Signed
+  #         path: ${{ runner.temp }}/ipa/*.ipa
