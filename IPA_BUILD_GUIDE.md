@@ -19,10 +19,15 @@ npx cap init "Daily Alpha AI" com.dailyalphaai.app --web-dir .
 ```
 
 ### 3. Add iOS platform
-```bash
-npx cap add ios
-npx cap sync ios
-```
+      - name: Prepare web assets
+        run: mkdir -p www && cp index.html www/
+
+      - name: Add iOS platform
+        run: npx cap add ios
+
+      - name: Sync Capacitor
+        run: npx cap sync ios
+
 
 ### 4. Open in Xcode
 ```bash
