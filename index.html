@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"/>
 <title>Daily Alpha AI</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -990,8 +990,7 @@ function obFinish() {
   ls.setItem('da_exp', obSelections.exp);
   ls.setItem('da_risk', obSelections.risk);
   ls.setItem('da_ob_done', '1');
-  document.getElementById('ob-complete-name').textContent = "You're all set, "+name+"! 🎉";
-  obShowStep(6);
+  launchApp();
 }
 function launchApp() {
   document.getElementById('screen-onboarding').classList.remove('active');
