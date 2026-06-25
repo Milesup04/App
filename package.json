@@ -1,0 +1,27 @@
+{
+  "name": "daily-alpha-ai",
+  "version": "3.0.0",
+  "description": "Daily Alpha AI — AI-powered investment companion",
+  "main": "index.html",
+  "scripts": {
+    "build": "echo 'No build step needed — single HTML file'",
+    "cap:init": "npx cap init 'Daily Alpha AI' com.dailyalphaai.app --web-dir .",
+    "cap:add:ios": "npx cap add ios",
+    "cap:add:android": "npx cap add android",
+    "cap:sync": "npx cap sync",
+    "cap:open:ios": "npx cap open ios"
+  },
+  "keywords": ["investment", "ai", "stocks", "portfolio"],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@capacitor/cli": "^6.0.0"
+  },
+  "dependencies": {
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/status-bar": "^6.0.0",
+    "@capacitor/splash-screen": "^6.0.0"
+  }
+}
