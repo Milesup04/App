@@ -535,7 +535,7 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
         <div class="chat-empty" id="chat-empty">
           <div class="chat-empty-icon">✨</div>
           <div style="color:var(--text1);font-size:18px;font-weight:800;margin-bottom:6px;letter-spacing:-.3px">Ask Alpha Assistant</div>
-          <div id="chat-empty-sub" style="color:var(--text2);font-size:12px;line-height:1.65;max-width:250px;margin:0 auto">Add an Anthropic API key in Settings to unlock real-time AI responses.</div>
+          <div id="chat-empty-sub" style="color:var(--text2);font-size:12px;line-height:1.65;max-width:250px;margin:0 auto">Add a free Groq key in Settings to unlock AI responses.</div>
           <div style="margin-top:16px;color:var(--text3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px">Try asking</div>
           <div class="prompts-wrap" id="prompts-wrap"></div>
         </div>
@@ -887,24 +887,16 @@ async function fetchAIPicks() {
   if (!Keys.groq && !Keys.anthropic) return null;
   if (!Keys.finnhub) return null;
 
-  // Wide scan list — 80 stocks across all major sectors
+  // 50 stocks across all major sectors — fits comfortably in Finnhub free tier
   const SCAN_SYMS = [
-    // Mega-cap tech
-    'NVDA','MSFT','AAPL','GOOGL','AMZN','META','TSLA','AMD','AVGO','ARM','INTC','ORCL','CRM','ADBE','QCOM',
-    // High-momentum / speculative
-    'PLTR','COIN','MSTR','SMCI','RIVN','SNAP','RBLX','HOOD','SOFI','IONQ','RGTI',
-    // Consumer & retail
-    'UBER','LYFT','NFLX','DIS','SBUX','MCD','COST','WMT','TGT','AMZN','NKE','ABNB',
-    // Finance
-    'JPM','GS','BAC','MS','V','MA','PYPL','SQ','NU',
-    // Healthcare & biotech
-    'LLY','PFE','MRNA','ABBV','JNJ','ISRG','DXCM',
-    // Energy
-    'XOM','CVX','OXY','SLB',
-    // Industrial / defence
-    'RTX','LMT','NOC','CAT','DE',
-    // ETFs for macro reads
-    'SPY','QQQ','IWM','GLD','TLT','XLK','XLE','XLF','ARKK','SOXL'
+    'NVDA','MSFT','AAPL','GOOGL','AMZN','META','TSLA','AMD','AVGO','ARM',
+    'PLTR','COIN','MSTR','SMCI','SNAP','RBLX','HOOD','SOFI','IONQ',
+    'UBER','NFLX','DIS','SBUX','NKE','ABNB','COST','WMT',
+    'JPM','GS','BAC','V','MA','PYPL',
+    'LLY','PFE','MRNA','ABBV','ISRG',
+    'XOM','CVX','OXY',
+    'RTX','LMT','CAT',
+    'SPY','QQQ','IWM','GLD','XLK'
   ];
 
   let newsLines = '';
@@ -913,13 +905,23 @@ async function fetchAIPicks() {
   let recLines = '';
 
   try {
-    // Step 1: news + all quotes in parallel
+    // Step 1: news + quotes in parallel, quotes batched to avoid rate limits
+    const batchFetch = async (syms, batchSize=25) => {
+      const results = [];
+      for(let i=0;i<syms.length;i+=batchSize){
+        const batch = syms.slice(i,i+batchSize);
+        const res = await Promise.allSettled(batch.map(s=>
+          fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${Keys.finnhub}`)
+            .then(r=>r.json()).then(d=>({s,d}))
+        ));
+        results.push(...res);
+        if(i+batchSize<syms.length) await new Promise(r=>setTimeout(r,1100));
+      }
+      return results;
+    };
     const [newsRes, quotesRes] = await Promise.all([
       fetch(`https://finnhub.io/api/v1/news?category=general&token=${Keys.finnhub}`),
-      Promise.allSettled(SCAN_SYMS.map(s=>
-        fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${Keys.finnhub}`)
-          .then(r=>r.json()).then(d=>({s,d}))
-      ))
+      batchFetch(SCAN_SYMS)
     ]);
 
     if (newsRes.ok) {
@@ -1201,7 +1203,7 @@ function setupBanner(containerId, missing) {
   const el = document.getElementById(containerId);
   if (!el) return;
   if (!missing.length) { el.innerHTML=''; return; }
-  const labels = missing.map(m=>m==='finnhub'?'a Finnhub key':'an Anthropic key').join(' & ');
+  const labels = missing.map(m=>m==='finnhub'?'a Finnhub key':m==='groq'?'a Groq key (free)':'an Anthropic key').join(' & ');
   el.innerHTML = `<div style="background:rgba(0,212,255,0.07);border:1px solid rgba(0,212,255,0.18);border-radius:12px;padding:11px 13px;display:flex;align-items:flex-start;gap:9px;margin-bottom:14px"><div style="font-size:18px">🔑</div><div style="flex:1"><div style="color:var(--blue);font-size:12px;font-weight:700;margin-bottom:3px">Setup needed</div><div style="color:var(--text2);font-size:11px;line-height:1.5;margin-bottom:7px">Add ${labels} in Settings to unlock live data.</div><button onclick="switchTab('settings')" style="background:var(--blue);border:none;border-radius:8px;padding:5px 12px;color:#000;font-size:11px;font-weight:700;cursor:pointer">Go to Settings →</button></div></div>`;
 }
 
@@ -1229,26 +1231,39 @@ function initHome() {
   const holdingSyms = State.holdings.map(h=>h.symbol);
   const baseSyms = [...new Set([...INDEX_SYMS.map(i=>i.s),...holdingSyms,...MOVER_SYMS.slice(0,10)])];
 
-  // Get AI picks first (fetches its own news+quotes internally, cached per day)
   const hasAI = (Keys.groq || Keys.anthropic) && Keys.finnhub;
   if (hasAI) {
     document.getElementById('home-recs').innerHTML = '<div style="color:var(--text3);font-size:11px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> Analysing today\'s news &amp; trends…</div>';
   }
 
-  fetchAIPicks().then(aiPicks=>{
-    State.aiPicks = aiPicks;
-    const pickSyms = aiPicks ? aiPicks.map(p=>p.symbol) : REC_SYMS;
-    const toFetch = [...new Set([...baseSyms,...pickSyms])];
-    return fetchQuotes(toFetch);
-  }).then(qs=>{
-    Object.assign(State.quotes, qs);
+  // Load home data — AI picks failures never block the rest of the screen
+  const loadHome_ = async () => {
+    // First load base quotes so portfolio/indices/movers show immediately
+    const baseQuotes = await fetchQuotes([...new Set([...INDEX_SYMS.map(i=>i.s),...holdingSyms,...MOVER_SYMS.slice(0,10)])]);
+    Object.assign(State.quotes, baseQuotes);
     renderHomePortfolio();
     renderHomeIndices();
-    renderHomeRecs();
     renderHomeMovers();
     renderHomeGauge();
     fetchNews().then(news=>{ State.news=news; renderHomeNews(); });
-  }).catch(()=>{
+
+    // Then run AI picks (may take longer — fetches 40 quotes + recommendations + candles)
+    try {
+      const aiPicks = await fetchAIPicks();
+      State.aiPicks = aiPicks;
+      // Fetch live quotes for whichever symbols Groq chose
+      if (aiPicks && aiPicks.length) {
+        const pickSyms = aiPicks.map(p=>p.symbol).filter(s=>!State.quotes[s]);
+        if (pickSyms.length) {
+          const pq = await fetchQuotes(pickSyms);
+          Object.assign(State.quotes, pq);
+        }
+      }
+    } catch(e) { State.aiPicks = null; }
+    renderHomeRecs();
+  };
+
+  loadHome_().catch(()=>{
     document.getElementById('home-recs').innerHTML = '<div style="color:var(--red);font-size:12px;padding:8px 0">Error loading data. Check your Finnhub key in Settings.</div>';
   });
 }
@@ -1715,7 +1730,7 @@ function removeHolding(id) {
 }
 
 function fetchHealthInsight() {
-  if (!Keys.anthropic) { showToast('Add an Anthropic key in Settings for AI analysis'); return; }
+  if (!Keys.groq && !Keys.anthropic) { showToast('Add a Groq key in Settings for AI analysis (free!)'); return; }
   const el = document.getElementById('health-insight');
   el.innerHTML = '<span style="color:var(--blue)">Analysing your portfolio…</span>';
   const enriched = State.holdings.map(h=>{
@@ -1739,10 +1754,10 @@ function initAI() {
   const provider = Keys.groq ? 'Groq (Llama 3.3)' : 'Claude';
   document.getElementById('ai-dot').style.background = hasKey ? 'var(--green)' : 'var(--gold)';
   document.getElementById('ai-status').textContent = hasKey ? `Powered by ${provider} · Educational mode` : 'Setup needed · Add Groq key (free)';
-  setupBanner('ai-setup-banner', hasKey ? [] : ['anthropic']);
+  setupBanner('ai-setup-banner', hasKey ? [] : ['groq']);
   document.getElementById('chat-empty-sub').textContent = hasKey
-    ? 'Powered by Claude AI. Ask me anything about investing, stocks, ETFs, or strategy.'
-    : 'Add an Anthropic API key in Settings to unlock real AI responses.';
+    ? `Powered by ${provider}. Ask me anything about investing, stocks, ETFs, or strategy.`
+    : 'Add a free Groq key in Settings to unlock AI responses. Get one at console.groq.com — no credit card needed.';
   renderPrompts();
 }
 
@@ -1822,7 +1837,7 @@ async function sendChat() {
     State.chatHistory.push({role:'assistant', content:reply});
     await typeText(aiBub, reply);
   } catch(e) {
-    aiBub.innerHTML = `<span style="color:var(--red);font-size:12px">Error: ${e.message}. Check your Anthropic key in Settings.</span>`;
+    aiBub.innerHTML = `<span style="color:var(--red);font-size:12px">Error: ${e.message}. Check your Groq key in Settings.</span>`;
   }
   State.chatStreaming = false;
   chatInputChange();
