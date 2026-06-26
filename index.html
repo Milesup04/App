@@ -10,6 +10,7 @@
 <meta name="description" content="AI-powered daily stock picks based on live market data and analyst consensus. Track your portfolio and get personalised investment insights."/>
 <meta name="theme-color" content="#050510"/>
 <link rel="manifest" href="manifest.json"/>
+<script src="https://accounts.google.com/gsi/client" async></script>
 <meta property="og:title" content="Daily Alpha AI"/>
 <meta property="og:description" content="AI-powered daily stock picks. Free with your own API keys."/>
 <meta property="og:type" content="website"/>
@@ -379,6 +380,7 @@ body.light .search-input{color:#0A0A18}
               <div class="ob-feature"><div class="ob-feature-icon" style="background:rgba(255,184,0,0.14)">📰</div><div class="ob-feature-text"><strong>Live news &amp; markets</strong> with crypto coverage</div></div>
             </div>
           </div>
+          <div id="google-signin-btn" style="display:none;width:100%;margin-bottom:10px"></div>
           <button class="btn-primary" onclick="obNext()">Get Started →</button>
           <div style="text-align:center;margin-top:12px;color:var(--text3);font-size:11px">Already have an account? <span style="color:var(--blue);cursor:pointer" onclick="signIn()">Sign In</span></div>
         </div>
@@ -712,6 +714,26 @@ body.light .search-input{color:#0A0A18}
               <button class="key-remove" id="an-remove" style="display:none" onclick="removeKey('an')">Remove</button>
             </div>
             <div class="key-hint">Paid. Get it at console.anthropic.com. If Groq key is also set, Groq is used instead.</div>
+          </div>
+        </div>
+        <div class="key-row">
+          <div class="key-header">
+            <div class="key-info">
+              <div class="key-icon" style="background:rgba(66,133,244,0.14)">🔵</div>
+              <div>
+                <div class="key-label">Google Login <span class="pill green" style="font-size:9px;margin-left:4px">FREE</span></div>
+                <div class="key-status" id="gcid-status" style="color:var(--gold)">○ Not set · console.cloud.google.com</div>
+              </div>
+            </div>
+            <button class="key-edit-btn" id="gcid-btn" onclick="toggleKeyForm('gcid')">Add</button>
+          </div>
+          <div class="key-form" id="gcid-form">
+            <input class="key-input" id="gcid-input" type="text" placeholder="Paste Google Client ID…"/>
+            <div class="key-actions">
+              <button class="key-save" style="background:linear-gradient(135deg,#4285F4,#34A853)" onclick="saveKey('gcid')">Save</button>
+              <button class="key-remove" id="gcid-remove" style="display:none" onclick="removeKey('gcid')">Remove</button>
+            </div>
+            <div class="key-hint">Free. Go to console.cloud.google.com → APIs &amp; Services → Credentials → Create OAuth 2.0 Client ID (Web application). Enables "Sign in with Google" so your profile persists across devices.</div>
           </div>
         </div>
       </div>
@@ -2344,6 +2366,13 @@ function updateKeyStatus() {
   document.getElementById('groq-btn').textContent = groqKey ? 'Edit' : 'Add Key';
   document.getElementById('groq-remove').style.display = groqKey ? 'block' : 'none';
   if (!document.getElementById('groq-input').value) document.getElementById('groq-input').value = groqKey;
+
+  const gcid = ls.getItem('da_gcid')||'';
+  document.getElementById('gcid-status').textContent = gcid ? '● Google login enabled' : '○ Not set · console.cloud.google.com';
+  document.getElementById('gcid-status').style.color = gcid ? 'var(--green)' : 'var(--gold)';
+  document.getElementById('gcid-btn').textContent = gcid ? 'Edit' : 'Add';
+  document.getElementById('gcid-remove').style.display = gcid ? 'block' : 'none';
+  if (!document.getElementById('gcid-input').value) document.getElementById('gcid-input').value = gcid;
 }
 
 function toggleKeyForm(type) {
@@ -2354,19 +2383,21 @@ function saveKey(type) {
   const val = document.getElementById(type+'-input').value.trim();
   if (type==='fh') Keys.finnhub = val;
   else if (type==='groq') Keys.groq = val;
+  else if (type==='gcid') { ls.setItem('da_gcid', val); initGoogleSignIn(); }
   else Keys.anthropic = val;
   updateKeyStatus();
-  const msgs = {fh:'✓ Finnhub key saved — live data now active', groq:'✓ Groq key saved — free AI now active', an:'✓ Anthropic key saved — AI features unlocked'};
-  showToast(msgs[type]);
+  const msgs = {fh:'✓ Finnhub key saved — live data now active', groq:'✓ Groq key saved — free AI now active', an:'✓ Anthropic key saved — AI features unlocked', gcid:'✓ Google Client ID saved — sign-in enabled'};
+  showToast(msgs[type]||'✓ Saved');
   document.getElementById(type+'-form').classList.remove('open');
 }
 
 function removeKey(type) {
   if (type==='fh') { Keys.finnhub=''; document.getElementById('fh-input').value=''; }
   else if (type==='groq') { Keys.groq=''; document.getElementById('groq-input').value=''; }
+  else if (type==='gcid') { ls.removeItem('da_gcid'); document.getElementById('gcid-input').value=''; document.getElementById('google-signin-btn').style.display='none'; }
   else { Keys.anthropic=''; document.getElementById('an-input').value=''; }
   updateKeyStatus();
-  showToast((type==='fh'?'Finnhub':type==='groq'?'Groq':'Anthropic')+' key removed');
+  showToast((type==='fh'?'Finnhub':type==='groq'?'Groq':type==='gcid'?'Google login':'Anthropic')+' key removed');
 }
 
 const toggleStates = {notif:true, daily:true, market:true};
@@ -2378,7 +2409,8 @@ function toggleSetting(key) {
 
 function signOut() {
   if (!confirm('Sign out? Your API keys and portfolio data will be cleared.')) return;
-  ['da_fh','da_an','da_ob_done','da_name','da_exp','da_risk','da_holdings','da_watchlist'].forEach(k=>ls.removeItem(k));
+  ['da_fh','da_an','da_ob_done','da_name','da_exp','da_risk','da_holdings','da_watchlist','da_google_email','da_google_picture'].forEach(k=>ls.removeItem(k));
+  if (window.google) { try { google.accounts.id.disableAutoSelect(); } catch(e) {} }
   State.userName=''; State.chatHistory=[]; State.quotes={}; State.chatHistory=[];
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('screen-onboarding').classList.add('active');
@@ -2985,6 +3017,62 @@ function obSpawnConfetti() {
   }
 }
 
+/* ====================================================
+   GOOGLE SIGN-IN
+   ==================================================== */
+function handleGoogleCredential(response) {
+  try {
+    // Decode JWT payload (base64url)
+    const payload = JSON.parse(atob(response.credential.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    const name = payload.given_name || payload.name || 'Investor';
+    const email = payload.email || '';
+    const picture = payload.picture || '';
+    // Save profile
+    ls.setItem('da_name', name);
+    ls.setItem('da_google_email', email);
+    ls.setItem('da_google_picture', picture);
+    ls.setItem('da_ob_done', '1');
+    State.userName = name;
+    // If not yet set experience/risk, set sensible defaults so app opens
+    if (!ls.getItem('da_exp')) ls.setItem('da_exp', 'Intermediate');
+    if (!ls.getItem('da_risk')) ls.setItem('da_risk', 'Balanced');
+    State.userExp = ls.getItem('da_exp');
+    State.userRisk = ls.getItem('da_risk');
+    showToast('Welcome back, ' + name + '!');
+    launchApp();
+  } catch(e) {
+    showToast('Google sign-in failed — try again');
+  }
+}
+
+function initGoogleSignIn() {
+  const clientId = ls.getItem('da_gcid');
+  if (!clientId || !window.google) return;
+  const container = document.getElementById('google-signin-btn');
+  if (!container) return;
+  try {
+    google.accounts.id.initialize({
+      client_id: clientId,
+      callback: handleGoogleCredential,
+      auto_select: true,
+      cancel_on_tap_outside: false,
+    });
+    container.innerHTML = '';
+    google.accounts.id.renderButton(container, {
+      type: 'standard',
+      theme: 'filled_black',
+      size: 'large',
+      text: 'continue_with',
+      shape: 'pill',
+      width: 290,
+    });
+    container.style.display = 'flex';
+    container.style.justifyContent = 'center';
+    // Prompt one-tap if already signed in with Google
+    google.accounts.id.prompt();
+  } catch(e) {}
+}
+
 // Apply theme early
 applyTheme();
 
@@ -2997,6 +3085,12 @@ if (ls.getItem('da_ob_done')) {
 } else {
   obShowStep(0);
   updateKeyStatus();
+  // Init Google Sign-In once GSI script has loaded
+  if (window.google) {
+    initGoogleSignIn();
+  } else {
+    window.addEventListener('load', initGoogleSignIn);
+  }
 }
 </script>
 </body>
