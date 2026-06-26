@@ -769,10 +769,10 @@ body.light .search-input{color:#0A0A18}
       </div>
       <div class="subsection-title">Preferences</div>
       <div class="card settings-group">
-        <div class="setting-row" onclick="showToast('Currency selection coming soon')">
+        <div class="setting-row" onclick="showCurrencyPicker()">
           <div class="setting-icon" style="background:rgba(0,255,135,0.14)">💱</div>
           <div style="flex:1"><div class="setting-label">Currency</div></div>
-          <span class="setting-val">USD</span>
+          <span class="setting-val" id="currency-val">USD</span>
           <span style="color:var(--text3);margin-left:4px">›</span>
         </div>
         <div class="setting-row" onclick="showToast('Theme selection coming soon')">
@@ -1033,6 +1033,100 @@ async function fetchNews() {
     }));
   } catch(e){ return []; }
 }
+
+/* ====================================================
+   CURRENCY
+   ==================================================== */
+const CURRENCIES = {
+  USD:{symbol:'$',name:'US Dollar',flag:'🇺🇸'},
+  GBP:{symbol:'£',name:'British Pound',flag:'🇬🇧'},
+  EUR:{symbol:'€',name:'Euro',flag:'🇪🇺'},
+  CAD:{symbol:'C$',name:'Canadian Dollar',flag:'🇨🇦'},
+  AUD:{symbol:'A$',name:'Australian Dollar',flag:'🇦🇺'},
+  JPY:{symbol:'¥',name:'Japanese Yen',flag:'🇯🇵'},
+  CHF:{symbol:'Fr',name:'Swiss Franc',flag:'🇨🇭'},
+  CNY:{symbol:'¥',name:'Chinese Yuan',flag:'🇨🇳'},
+  INR:{symbol:'₹',name:'Indian Rupee',flag:'🇮🇳'},
+  BRL:{symbol:'R$',name:'Brazilian Real',flag:'🇧🇷'},
+  MXN:{symbol:'$',name:'Mexican Peso',flag:'🇲🇽'},
+  SGD:{symbol:'S$',name:'Singapore Dollar',flag:'🇸🇬'},
+  HKD:{symbol:'HK$',name:'Hong Kong Dollar',flag:'🇭🇰'},
+  NOK:{symbol:'kr',name:'Norwegian Krone',flag:'🇳🇴'},
+  SEK:{symbol:'kr',name:'Swedish Krona',flag:'🇸🇪'},
+  NZD:{symbol:'NZ$',name:'New Zealand Dollar',flag:'🇳🇿'},
+  ZAR:{symbol:'R',name:'South African Rand',flag:'🇿🇦'},
+  AED:{symbol:'د.إ',name:'UAE Dirham',flag:'🇦🇪'},
+};
+
+let _fxRate = 1; // USD → selected currency
+let _fxCode = ls.getItem('da_currency') || 'USD';
+
+async function fetchFxRate(code) {
+  if (code === 'USD') { _fxRate = 1; return; }
+  try {
+    const r = await fetch(`https://api.frankfurter.app/latest?from=USD&to=${code}`);
+    const j = await r.json();
+    _fxRate = j.rates[code] || 1;
+  } catch(e) { _fxRate = 1; }
+}
+
+function fmtPrice(usdVal, compact=false) {
+  if (usdVal == null || isNaN(usdVal)) return '—';
+  const c = CURRENCIES[_fxCode] || CURRENCIES.USD;
+  const v = usdVal * _fxRate;
+  if (compact && Math.abs(v) >= 1000000) return c.symbol + (v/1000000).toFixed(2) + 'M';
+  if (compact && Math.abs(v) >= 1000) return c.symbol + (v/1000).toFixed(1) + 'K';
+  const decimals = _fxCode === 'JPY' ? 0 : (Math.abs(v) < 1 ? 4 : 2);
+  return c.symbol + v.toLocaleString('en-US',{minimumFractionDigits:decimals,maximumFractionDigits:decimals});
+}
+
+function fmtCurrCode() { return _fxCode; }
+function fmtCurrSymbol() { return (CURRENCIES[_fxCode]||CURRENCIES.USD).symbol; }
+
+async function setCurrency(code) {
+  _fxCode = code;
+  ls.setItem('da_currency', code);
+  saveCurrentProfile();
+  await fetchFxRate(code);
+  // Update the settings display
+  const el = document.getElementById('currency-val');
+  if (el) el.textContent = code;
+  // Re-render screens that show prices
+  if (State.activeTab === 'home') initHome();
+  else if (State.activeTab === 'portfolio') initPortfolio();
+  else if (State.activeTab === 'markets') initMarkets();
+  closeCurrencyPicker();
+}
+
+function showCurrencyPicker() {
+  const existing = document.getElementById('currency-picker-modal');
+  if (existing) { existing.remove(); return; }
+  const modal = document.createElement('div');
+  modal.id = 'currency-picker-modal';
+  modal.style.cssText = 'position:absolute;inset:0;background:rgba(0,0,0,0.7);z-index:999;display:flex;flex-direction:column;justify-content:flex-end;';
+  const sheet = document.createElement('div');
+  sheet.style.cssText = 'background:#0F0F1E;border-radius:24px 24px 0 0;padding:20px 16px 32px;max-height:75%;overflow-y:auto;';
+  sheet.innerHTML = `<div style="text-align:center;margin-bottom:16px"><div style="width:40px;height:4px;background:var(--border);border-radius:2px;margin:0 auto 14px"></div><div style="color:var(--text1);font-size:17px;font-weight:800">Select Currency</div></div>`
+    + Object.entries(CURRENCIES).map(([code, c]) =>
+      `<div onclick="setCurrency('${code}')" style="display:flex;align-items:center;gap:12px;padding:13px 12px;border-radius:12px;cursor:pointer;background:${_fxCode===code?'var(--glass2)':'transparent'};margin-bottom:2px">
+        <span style="font-size:22px">${c.flag}</span>
+        <div style="flex:1"><div style="color:var(--text1);font-size:14px;font-weight:600">${c.name}</div><div style="color:var(--text3);font-size:11px">${code}</div></div>
+        <div style="color:var(--text2);font-size:14px;font-weight:700">${c.symbol}</div>
+        ${_fxCode===code?'<div style="color:var(--blue);font-size:16px">✓</div>':''}
+      </div>`
+    ).join('');
+  modal.appendChild(sheet);
+  modal.addEventListener('click', e => { if (e.target === modal) closeCurrencyPicker(); });
+  document.getElementById('phone').appendChild(modal);
+}
+
+function closeCurrencyPicker() {
+  const m = document.getElementById('currency-picker-modal');
+  if (m) m.remove();
+}
+
+// Init FX on load
+fetchFxRate(_fxCode);
 
 function q2stock(sym, q) {
   const info = SYMBOL_INFO[sym] || {name:sym,sector:'Other',type:'stock'};
@@ -1424,7 +1518,7 @@ function getAccounts() {
 function saveAccounts(obj) { ls.setItem('da_accounts', JSON.stringify(obj)); }
 
 // Keys we persist per-account
-const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done'];
+const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency'];
 
 function saveCurrentProfile() {
   const email = ls.getItem('da_current_email');
@@ -1457,6 +1551,8 @@ function loadProfile(email) {
   Keys.finnhub = ls.getItem('da_fh')||'';
   Keys.groq = ls.getItem('da_groq')||'';
   Keys.anthropic = ls.getItem('da_an')||'';
+  _fxCode = ls.getItem('da_currency')||'USD';
+  fetchFxRate(_fxCode);
 }
 
 // Auth UI helpers
@@ -1680,9 +1776,9 @@ function renderHomePortfolio() {
   const total = enriched.reduce((s,h)=>s+h.value,0);
   const dayChg = enriched.reduce((s,h)=>s+h.dayChange,0);
   const dayPct = total>0 ? (dayChg/(total-dayChg||1))*100 : 0;
-  document.getElementById('home-portfolio-val').textContent = '$'+total.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('home-portfolio-val').textContent = fmtPrice(total);
   const sign = dayChg>=0?'+':'';
-  document.getElementById('home-portfolio-change').innerHTML = `<span class="pill ${dayChg>=0?'green':'red'}">${sign}$${Math.abs(dayChg).toFixed(2)} (${sign}${dayPct.toFixed(2)}%) today</span>`;
+  document.getElementById('home-portfolio-change').innerHTML = `<span class="pill ${dayChg>=0?'green':'red'}">${sign}${fmtPrice(Math.abs(dayChg))} (${sign}${dayPct.toFixed(2)}%) today</span>`;
 }
 
 function renderHomeIndices() {
@@ -1711,9 +1807,8 @@ function renderHomeRecs() {
         trend:pick.trend||'',
         holdPeriod:pick.holdPeriod||'',
         holdReason:pick.holdReason||'',
-        entry: p ? (p*.982).toFixed(2)+' – '+(p*1.012).toFixed(2) : '—',
-        target: p ? (p*1.13).toFixed(2) : '—',
-        stop: p ? (p*.912).toFixed(2) : '—'
+        entryLow: p ? p*.982 : null, entryHigh: p ? p*1.012 : null,
+        target: p ? p*1.13 : null, stop: p ? p*.912 : null
       };
     });
   } else {
@@ -1723,8 +1818,7 @@ function renderHomeRecs() {
       const conf=Math.max(55,Math.min(96,Math.round(70+pct*5+(info.type==='etf'?8:0)+(s==='NVDA'?6:0))));
       const p=q.c;
       return {symbol:s,name:info.name,sector:info.sector,price:p,pct,conf,
-        entry:(p*.982).toFixed(2)+' – '+(p*1.012).toFixed(2),
-        target:(p*1.13).toFixed(2),stop:(p*.912).toFixed(2)};
+        entryLow:p*.982,entryHigh:p*1.012,target:p*1.13,stop:p*.912};
     }).sort((a,b)=>b.conf-a.conf).slice(0,3);
   }
 
@@ -1748,7 +1842,7 @@ function renderHomeRecs() {
           </div>
         </div>
         <div style="text-align:right">
-          <div class="rec-price-val">$${r.price.toFixed(2)}</div>
+          <div class="rec-price-val">${fmtPrice(r.price)}</div>
           <div style="color:${r.pct>=0?'var(--green)':'var(--red)'};font-size:11px;font-weight:600">${r.pct>=0?'+':''}${r.pct.toFixed(2)}%</div>
           <div style="margin-top:4px">${generateSparkline(r.pct)}</div>
         </div>
@@ -1767,9 +1861,9 @@ function renderHomeRecs() {
       </div>` : ''}
       ${r.trend ? `<div style="color:var(--text3);font-size:10px;margin-bottom:7px;padding:5px 8px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px solid var(--border)">📈 ${r.trend}</div>` : ''}
       <div class="rec-metrics">
-        <div class="rec-metric"><div class="rec-metric-label">Entry Zone</div><div class="rec-metric-val">$${r.entry}</div></div>
-        <div class="rec-metric"><div class="rec-metric-label">Target</div><div class="rec-metric-val" style="color:var(--green)">$${r.target}</div></div>
-        <div class="rec-metric"><div class="rec-metric-label">Stop Loss</div><div class="rec-metric-val" style="color:var(--red)">$${r.stop}</div></div>
+        <div class="rec-metric"><div class="rec-metric-label">Entry Zone</div><div class="rec-metric-val">${r.entryLow?fmtPrice(r.entryLow)+' – '+fmtPrice(r.entryHigh):'—'}</div></div>
+        <div class="rec-metric"><div class="rec-metric-label">Target</div><div class="rec-metric-val" style="color:var(--green)">${r.target?fmtPrice(r.target):'—'}</div></div>
+        <div class="rec-metric"><div class="rec-metric-label">Stop Loss</div><div class="rec-metric-val" style="color:var(--red)">${r.stop?fmtPrice(r.stop):'—'}</div></div>
       </div>
       <div class="rec-detail"><div class="rec-reasoning" id="rec-reason-${r.symbol}">${r.rationale ? `<div style="color:var(--text2);font-size:12px;line-height:1.65">${r.rationale}</div>` : '<span style="color:var(--text3);font-size:12px">Tap to load AI reasoning…</span>'}</div></div>
       <div style="color:var(--text3);font-size:10px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">📡 Finnhub market data · Wall St analyst consensus · Groq AI analysis</div>
@@ -1916,7 +2010,7 @@ function renderTrackRecord() {
       <div style="width:36px;height:36px;border-radius:10px;background:${isUp?'rgba(0,255,135,0.1)':'rgba(255,59,92,0.1)'};border:1px solid ${isUp?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--text1);flex-shrink:0">${h.symbol.slice(0,4)}</div>
       <div style="flex:1;min-width:0">
         <div style="color:var(--text1);font-size:13px;font-weight:700">${h.symbol} <span style="color:var(--text3);font-size:10px;font-weight:400">${h.session} · ${dateStr}</span></div>
-        <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">$${h.entryPrice.toFixed(2)} → $${h.exitPrice.toFixed(2)}${h.holdPeriod?' · '+h.holdPeriod:''}</div>
+        <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${fmtPrice(h.entryPrice)} → ${fmtPrice(h.exitPrice)}${h.holdPeriod?' · '+h.holdPeriod:''}</div>
       </div>
       <div style="color:${col};font-size:13px;font-weight:800;flex-shrink:0">${isUp?'▲':'▼'} ${sign}${h.returnPct.toFixed(2)}%</div>
     </div>`;
@@ -1967,7 +2061,7 @@ function toggleRec(card, symbol, price) {
       reasonEl.dataset.loaded = '1';
       reasonEl.innerHTML = '<div class="dot-typing"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>';
       const context = State.userRisk ? ` The user has a ${State.userRisk} risk profile.` : '';
-      const priceStr = price ? `at $${Number(price).toFixed(2)}` : '';
+      const priceStr = price ? `at ${fmtPrice(Number(price))}` : '';
       callClaude([{role:'user',content:`In 2-3 sentences, explain why ${symbol} ${priceStr} might be worth watching today for an investor.${context} Mention one specific factor (earnings, momentum, sector trend, or macro). Be direct and educational.`}])
         .then(text=>{ reasonEl.innerHTML = `<div style="color:var(--text2);font-size:12px;line-height:1.65">${formatMD(text)}</div>`; })
         .catch(e=>{ reasonEl.innerHTML = `<div style="color:var(--text3);font-size:11px">AI reasoning unavailable: ${e.message}</div>`; });
@@ -1987,7 +2081,7 @@ function renderHomeMovers() {
       </div>
       <div style="margin-right:12px">${generateSparkline(s.pct,14)}</div>
       <div style="text-align:right">
-        <div style="color:var(--text1);font-size:13px;font-weight:700">$${s.price.toFixed(2)}</div>
+        <div style="color:var(--text1);font-size:13px;font-weight:700">${fmtPrice(s.price)}</div>
         <div style="color:${s.pct>=0?'var(--green)':'var(--red)'};font-size:12px;font-weight:600">${s.pct>=0?'+':''}${s.pct.toFixed(2)}%</div>
       </div>
     </div>`).join('') : '<div class="mover-row"><span style="color:var(--text3);font-size:12px">No data available.</span></div>';
@@ -2110,7 +2204,7 @@ function renderWatchlist() {
         <div class="stock-icon" style="background:${s.pct>=0?'rgba(0,255,135,0.10)':'rgba(255,59,92,0.10)'};border:1px solid ${s.pct>=0?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'}">${s.symbol.slice(0,4)}</div>
         <div style="flex:1"><div class="stock-name">${s.symbol}</div><div class="stock-sub">${s.name.split(' ').slice(0,2).join(' ')}</div></div>
         <div style="margin-right:8px">${generateSparkline(s.pct,14)}</div>
-        <div style="text-align:right;margin-right:8px"><div class="stock-price">$${s.price.toFixed(2)}</div><div class="stock-pct" style="color:${s.pct>=0?'var(--green)':'var(--red)'}">${s.pct>=0?'+':''}${s.pct.toFixed(2)}%</div></div>
+        <div style="text-align:right;margin-right:8px"><div class="stock-price">${fmtPrice(s.price)}</div><div class="stock-pct" style="color:${s.pct>=0?'var(--green)':'var(--red)'}">${s.pct>=0?'+':''}${s.pct.toFixed(2)}%</div></div>
         <button class="watchlist-toggle watching" onclick="toggleWatch('${s.symbol}',event)" title="Remove from watchlist">★</button>
       </div>`).join('')
     : '<div style="color:var(--text3);font-size:12px;padding:12px 14px">Your watchlist is empty. Search for stocks to add them.</div>';
@@ -2148,7 +2242,7 @@ function renderCrypto() {
       <div style="flex:1"><div class="stock-name">${c.symbol}</div><div class="stock-sub">${c.name}</div></div>
       <div style="margin-right:8px">${generateSparkline(c.change,14)}</div>
       <div style="text-align:right">
-        <div class="stock-price">$${c.price.toLocaleString('en-US',{minimumFractionDigits:c.price<1?4:2,maximumFractionDigits:c.price<1?4:2})}</div>
+        <div class="stock-price">${fmtPrice(c.price)}</div>
         <div class="stock-pct" style="color:${c.change>=0?'var(--green)':'var(--red)'}">${c.change>=0?'+':''}${c.change.toFixed(2)}%</div>
       </div>
     </div>`).join('');
@@ -2161,7 +2255,7 @@ function stockRows(stocks, showSpark) {
       <div style="flex:1"><div class="stock-name">${s.symbol}</div><div class="stock-sub">${s.name.split(' ').slice(0,2).join(' ')}</div></div>
       ${showSpark?`<div style="margin-right:8px">${generateSparkline(s.pct,14)}</div>`:''}
       <div style="text-align:right">
-        <div class="stock-price">$${s.price.toFixed(2)}</div>
+        <div class="stock-price">${fmtPrice(s.price)}</div>
         <div class="stock-pct" style="color:${s.pct>=0?'var(--green)':'var(--red)'}">${s.pct>=0?'+':''}${s.pct.toFixed(2)}%</div>
       </div>
     </div>`).join('');
@@ -2181,7 +2275,7 @@ function marketsSearch() {
       <div class="stock-icon" style="background:rgba(0,212,255,0.09);border:1px solid rgba(0,212,255,0.2)">${(s.symbol||'').slice(0,4)}</div>
       <div style="flex:1"><div class="stock-name">${s.symbol}</div><div class="stock-sub">${s.name||''}</div></div>
       <div style="text-align:right">
-        ${s.price?`<div class="stock-price">$${typeof s.price==='number'?s.price.toFixed(2):s.price}</div>`:''}
+        ${s.price?`<div class="stock-price">${fmtPrice(typeof s.price==='number'?s.price:parseFloat(s.price))}</div>`:''}
         ${s.pct!==undefined?`<div class="stock-pct" style="color:${s.pct>=0?'var(--green)':'var(--red)'}">${s.pct>=0?'+':''}${s.pct.toFixed(2)}%</div>`:''}
       </div>
       <button onclick="addToWatchlist('${s.symbol}',event)" style="background:var(--glass);border:1px solid var(--border);border-radius:8px;padding:4px 8px;color:var(--text2);font-size:11px;cursor:pointer;margin-left:8px">+★</button>
@@ -2231,9 +2325,9 @@ function renderPortfolio() {
   const totalCost=enriched.reduce((s,h)=>s+h.cost,0);
   const pnl=totalVal-totalCost;
   const pnlPct=totalCost>0?(pnl/totalCost)*100:0;
-  document.getElementById('port-total-val').textContent = Keys.finnhub&&totalVal?'$'+totalVal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'$'+totalCost.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})+(Keys.finnhub?'':' (cost basis)');
+  document.getElementById('port-total-val').textContent = Keys.finnhub&&totalVal ? fmtPrice(totalVal) : fmtPrice(totalCost)+(Keys.finnhub?'':' (cost basis)');
   const sign=pnl>=0?'+':'';
-  document.getElementById('port-pnl').innerHTML = Keys.finnhub&&totalVal ? `<span class="pill ${pnl>=0?'green':'red'}" style="font-size:12px">${sign}$${Math.abs(pnl).toFixed(2)} (${sign}${pnlPct.toFixed(2)}%) all time</span>` : '';
+  document.getElementById('port-pnl').innerHTML = Keys.finnhub&&totalVal ? `<span class="pill ${pnl>=0?'green':'red'}" style="font-size:12px">${sign}${fmtPrice(Math.abs(pnl))} (${sign}${pnlPct.toFixed(2)}%) all time</span>` : '';
   // Health score
   const bySector={};
   enriched.forEach(h=>{ bySector[h.sector]=(bySector[h.sector]||0)+h.value; });
@@ -2275,17 +2369,17 @@ function renderPortfolio() {
         </div>
         <div style="display:flex;align-items:center;gap:9px">
           <div style="text-align:right">
-            <div style="color:var(--text1);font-size:14px;font-weight:700">${Keys.finnhub&&h.value?'$'+h.value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'$'+h.cost.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-            ${Keys.finnhub&&h.value?`<div style="color:${pos?'var(--green)':'var(--red)'};font-size:12px;font-weight:600">${pos?'+':''}$${Math.abs(pnl2).toFixed(2)} (${pos?'+':''}${pct2.toFixed(1)}%)</div>`:''}
+            <div style="color:var(--text1);font-size:14px;font-weight:700">${Keys.finnhub&&h.value?fmtPrice(h.value):fmtPrice(h.cost)}</div>
+            ${Keys.finnhub&&h.value?`<div style="color:${pos?'var(--green)':'var(--red)'};font-size:12px;font-weight:600">${pos?'+':''}${fmtPrice(Math.abs(pnl2))} (${pos?'+':''}${pct2.toFixed(1)}%)</div>`:''}
           </div>
           <button onclick="removeHolding('${h.id}')" style="background:rgba(255,59,92,0.1);border:1px solid rgba(255,59,92,0.2);border-radius:8px;width:28px;height:28px;color:var(--red);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">✕</button>
         </div>
       </div>
       <div style="display:flex;gap:8px">
-        <div class="holding-metric"><div class="holding-metric-label">Avg Cost</div><div class="holding-metric-val">$${h.avgCost.toFixed(2)}</div></div>
-        <div class="holding-metric"><div class="holding-metric-label">Current</div><div class="holding-metric-val">${Keys.finnhub&&h.price?'$'+h.price.toFixed(2):'—'}</div></div>
+        <div class="holding-metric"><div class="holding-metric-label">Avg Cost</div><div class="holding-metric-val">${fmtPrice(h.avgCost)}</div></div>
+        <div class="holding-metric"><div class="holding-metric-label">Current</div><div class="holding-metric-val">${Keys.finnhub&&h.price?fmtPrice(h.price):'—'}</div></div>
         <div class="holding-metric"><div class="holding-metric-label">Weight</div><div class="holding-metric-val">${totalVal>0?((h.value/totalVal)*100).toFixed(1):0}%</div></div>
-        <div class="holding-metric"><div class="holding-metric-label">Value</div><div class="holding-metric-val">${Keys.finnhub&&h.value?'$'+(h.value/1000).toFixed(1)+'k':'—'}</div></div>
+        <div class="holding-metric"><div class="holding-metric-label">Value</div><div class="holding-metric-val">${Keys.finnhub&&h.value?fmtPrice(h.value,true):'—'}</div></div>
       </div>
     </div>`;
   }).join('') : '<div style="color:var(--text3);font-size:12px;padding:14px 0;text-align:center">No holdings yet — tap <strong style="color:var(--blue)">+ Add</strong> to start tracking your portfolio.</div>';
@@ -2475,6 +2569,8 @@ function updateSettingsProfile() {
     const risk = State.userRisk || 'Balanced';
     pills.innerHTML = `<span class="pill blue">${exp.split(' ').slice(-1)[0]}</span><span class="pill gold">${risk.split(' ').slice(-1)[0]} Risk</span>`;
   }
+  const cv = document.getElementById('currency-val');
+  if (cv) cv.textContent = _fxCode;
   updateKeyStatus();
 }
 
@@ -2620,7 +2716,7 @@ function openStockDetail(symbol) {
   document.getElementById('modal-sector').textContent = info.sector;
   const q = State.quotes[symbol];
   if (q) {
-    document.getElementById('modal-price').textContent = '$' + q.c.toFixed(2);
+    document.getElementById('modal-price').textContent = fmtPrice(q.c);
     const pct = q.dp ?? 0;
     const el = document.getElementById('modal-change');
     el.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
@@ -3026,7 +3122,7 @@ async function runCompare() {
       <div style="flex:1;background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:12px">
         <div style="color:var(--text1);font-size:16px;font-weight:800">${s}</div>
         <div style="color:var(--text3);font-size:10px;margin-bottom:8px">${info.name.split(' ').slice(0,3).join(' ')}</div>
-        <div style="color:var(--text1);font-size:18px;font-weight:700">${q ? '$'+q.c.toFixed(2) : '—'}</div>
+        <div style="color:var(--text1);font-size:18px;font-weight:700">${q ? fmtPrice(q.c) : '—'}</div>
         <div style="color:${q?(q.dp??0)>=0?'var(--green)':'var(--red)':'var(--text3)'};font-size:12px;font-weight:600">${q ? (q.dp??0)>=0?'+':'':''  }${q ? (q.dp??0).toFixed(2)+'% today' : '—'}</div>
         <div style="margin-top:8px;font-size:11px;color:var(--text2)">30d: <span style="color:${colPct(ch)};font-weight:700">${fmtPct(ch)}</span></div>
         <div style="font-size:11px;color:var(--text2);margin-top:3px">Sector: ${info.sector}</div>
