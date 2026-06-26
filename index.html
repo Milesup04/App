@@ -255,6 +255,42 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
 
 /* Crypto styles */
 .crypto-icon{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;margin-right:11px;flex-shrink:0}
+
+/* Light mode overrides */
+body.light{background:#E8EAF2}
+body.light #phone{background:#F0F2F8;box-shadow:0 0 0 2px rgba(0,0,0,0.12),0 40px 100px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.8)}
+body.light{--text1:#0A0A18;--text2:#4A4A62;--text3:#7A7A9E;--glass:rgba(0,0,0,0.04);--glass2:rgba(0,0,0,0.06);--border:rgba(0,0,0,0.08);--bg:#F0F2F8}
+body.light #screen-home{background:linear-gradient(180deg,#EEF0F8,#E8EAF2)}
+body.light #screen-markets{background:linear-gradient(180deg,#EEF0F8,#E8EAF2)}
+body.light #screen-portfolio{background:linear-gradient(180deg,#EEF0F8,#E8EAF2)}
+body.light #screen-ai{background:linear-gradient(180deg,#EEF0F8,#E8EAF2)}
+body.light #screen-settings{background:linear-gradient(180deg,#EEF0F8,#E8EAF2)}
+body.light #navbar{background:rgba(240,242,248,0.98);border-top:1px solid rgba(0,0,0,0.08)}
+body.light #statusbar-time{color:rgba(0,0,0,0.85)}
+body.light .nav-label{color:#7A7A9E}
+body.light .chat-input-row{background:rgba(240,242,248,0.97)}
+body.light .chat-bubble.ai{background:rgba(0,0,0,0.06);border:1px solid rgba(0,0,0,0.08);color:var(--text1)}
+body.light .ob-input{background:rgba(0,0,0,0.05);border-color:rgba(0,0,0,0.12);color:#0A0A18}
+body.light .form-input{background:rgba(0,0,0,0.05);border-color:rgba(0,0,0,0.12);color:#0A0A18}
+body.light .key-input{background:rgba(0,0,0,0.05);border-color:rgba(0,0,0,0.12);color:#0A0A18}
+body.light .chat-textarea{background:rgba(0,0,0,0.05);border-color:rgba(0,0,0,0.12);color:#0A0A18}
+body.light .search-input{color:#0A0A18}
+
+/* Stock detail modal */
+#stock-modal{position:absolute;inset:0;z-index:200;background:var(--bg);display:none;flex-direction:column;overflow-y:auto}
+#stock-modal.open{display:flex}
+.modal-header{padding:14px 16px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
+.modal-close{width:34px;height:34px;border-radius:10px;background:var(--glass);border:1px solid var(--border);color:var(--text2);font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center}
+.modal-body{padding:16px;flex:1}
+#stock-chart-canvas{display:block;width:100%;border-radius:12px;background:var(--glass);border:1px solid var(--border);margin-bottom:14px}
+
+/* Compare modal */
+#compare-modal{position:absolute;inset:0;z-index:200;background:rgba(0,0,0,0.7);display:none;align-items:flex-end;backdrop-filter:blur(4px)}
+#compare-modal.open{display:flex}
+#compare-inner{background:var(--bg);border-radius:20px 20px 0 0;padding:20px 16px 30px;width:100%;border:1px solid var(--border)}
+
+/* Offline banner */
+#offline-banner{background:rgba(255,184,0,0.12);border:1px solid rgba(255,184,0,0.25);border-radius:10px;padding:7px 12px;font-size:11px;color:var(--gold);display:none;margin-bottom:10px;text-align:center}
 </style>
 </head>
 <body>
@@ -382,6 +418,7 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
         <div class="index-chip"><div class="index-name">DOW</div><div class="index-val skel" style="height:18px;width:60px;border-radius:5px"></div></div>
       </div>
       <div class="disclaimer">ℹ️ Educational purposes only · Not financial advice</div>
+      <div id="offline-banner">📡 Offline — showing cached data</div>
       <div id="home-setup-banner"></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div><div class="section-title" style="margin:0">Today's AI Picks</div><div style="color:var(--text3);font-size:11px;margin-top:2px">Tap card to expand AI reasoning</div></div>
@@ -414,10 +451,13 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
         <button onclick="refreshMarkets()" style="background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">↻ Refresh</button>
       </div>
       <div id="markets-setup-banner"></div>
-      <div class="search-box" id="markets-search-wrap" style="display:none">
-        <span style="color:var(--text3)">🔍</span>
-        <input class="search-input" id="markets-search" placeholder="Search stocks, ETFs, crypto…" oninput="marketsSearch()"/>
-        <button onclick="clearSearch()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px">✕</button>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px" id="markets-search-wrap" style="display:none">
+        <div class="search-box" style="flex:1;margin-bottom:0">
+          <span style="color:var(--text3)">🔍</span>
+          <input class="search-input" id="markets-search" placeholder="Search stocks, ETFs, crypto…" oninput="marketsSearch()"/>
+          <button onclick="clearSearch()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:13px">✕</button>
+        </div>
+        <button onclick="openCompareModal()" style="background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:9px 12px;color:var(--text2);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0">⇄ Compare</button>
       </div>
       <div id="markets-search-results" style="display:none;background:var(--glass);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:12px"></div>
       <div class="tab-row" id="markets-tabs" style="display:none">
@@ -458,7 +498,11 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
     <div class="screen" id="screen-portfolio" style="padding:14px 16px 24px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="color:var(--text1);font-size:20px;font-weight:800;letter-spacing:-.3px">Portfolio</div>
-        <button onclick="toggleAddForm()" style="background:linear-gradient(135deg,#00D4FF,#0055FF);border:none;border-radius:11px;padding:7px 16px;color:#000;font-size:12px;font-weight:800;cursor:pointer;transition:opacity .2s">+ Add</button>
+        <div style="display:flex;gap:6px">
+          <button onclick="triggerCSVImport()" style="background:var(--glass);border:1px solid var(--border);border-radius:11px;padding:7px 12px;color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">⬆ CSV</button>
+          <input type="file" id="csv-import-input" accept=".csv" style="display:none" onchange="handleCSVImport(event)"/>
+          <button onclick="toggleAddForm()" style="background:linear-gradient(135deg,#00D4FF,#0055FF);border:none;border-radius:11px;padding:7px 16px;color:#000;font-size:12px;font-weight:800;cursor:pointer;transition:opacity .2s">+ Add</button>
+        </div>
       </div>
       <div id="portfolio-setup-banner"></div>
       <div class="add-form" id="add-form">
@@ -493,6 +537,8 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
         </div>
         <span style="color:var(--text3);font-size:20px">›</span>
       </div>
+      <canvas id="portfolio-chart" height="120" style="width:100%;display:none;border-radius:14px;background:var(--glass);border:1px solid var(--border);margin-bottom:14px"></canvas>
+      <div id="tax-efficiency-card" style="display:none;margin-bottom:14px"></div>
       <div class="card" style="padding:14px 16px;margin-bottom:14px">
         <div class="section-title" style="margin-bottom:12px">Allocation</div>
         <div style="display:flex;align-items:center;gap:16px">
@@ -548,7 +594,10 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
 
     <!-- SETTINGS -->
     <div class="screen" id="screen-settings" style="padding:14px 16px 32px">
-      <div style="color:var(--text1);font-size:20px;font-weight:800;margin-bottom:16px;letter-spacing:-.3px">Settings</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="color:var(--text1);font-size:20px;font-weight:800;letter-spacing:-.3px">Settings</div>
+        <button id="theme-toggle-btn" onclick="toggleTheme()" style="background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:7px 13px;font-size:18px;cursor:pointer;display:flex;align-items:center;gap:6px;color:var(--text1)">🌙</button>
+      </div>
       <div class="subsection-title">API Keys</div>
       <div class="key-section">
         <div class="key-row">
@@ -668,6 +717,49 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
         </div>
       </div>
       <button class="signout-btn" onclick="signOut()">🚪 Sign Out</button>
+    </div>
+
+    <!-- STOCK DETAIL MODAL -->
+    <div id="stock-modal">
+      <div class="modal-header">
+        <div>
+          <div id="modal-symbol" style="color:var(--text1);font-size:18px;font-weight:800"></div>
+          <div id="modal-name" style="color:var(--text3);font-size:11px;margin-top:2px"></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div>
+            <div id="modal-price" style="color:var(--text1);font-size:16px;font-weight:700;text-align:right"></div>
+            <div id="modal-change" style="font-size:12px;font-weight:600;text-align:right"></div>
+          </div>
+          <button class="modal-close" onclick="closeStockModal()">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <canvas id="stock-chart-canvas" width="340" height="120"></canvas>
+        <div style="display:flex;gap:10px;margin-bottom:14px">
+          <div class="rec-metric" style="flex:1"><div class="rec-metric-label">RSI (14)</div><div class="rec-metric-val" id="modal-rsi">—</div></div>
+          <div class="rec-metric" style="flex:1"><div class="rec-metric-label">30d Change</div><div class="rec-metric-val" id="modal-30d">—</div></div>
+          <div class="rec-metric" style="flex:1"><div class="rec-metric-label">Sector</div><div class="rec-metric-val" id="modal-sector">—</div></div>
+        </div>
+        <div class="section-title" style="font-size:14px">Recent News</div>
+        <div id="modal-news"><div style="color:var(--text3);font-size:12px">Loading news…</div></div>
+      </div>
+    </div>
+
+    <!-- COMPARE MODAL -->
+    <div id="compare-modal">
+      <div id="compare-inner">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div style="color:var(--text1);font-size:16px;font-weight:700">Compare Stocks</div>
+          <button onclick="closeCompareModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:12px">
+          <input id="compare-sym1" class="form-input" placeholder="Symbol 1 (e.g. AAPL)" style="margin:0;flex:1;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"/>
+          <input id="compare-sym2" class="form-input" placeholder="Symbol 2 (e.g. MSFT)" style="margin:0;flex:1;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()"/>
+        </div>
+        <button class="btn-primary" onclick="runCompare()" style="margin-bottom:12px">Compare →</button>
+        <div id="compare-results"></div>
+      </div>
     </div>
 
   </div>
