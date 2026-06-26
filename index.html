@@ -1563,7 +1563,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   if(b) b.onclick = launchApp;
 });
 
-// Auto-save profile whenever user makes changes
+// Save profile when app goes to background (iOS) or tab closes
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveCurrentProfile(); });
+window.addEventListener('pagehide', saveCurrentProfile);
 window.addEventListener('beforeunload', saveCurrentProfile);
 
 function signIn() {
@@ -2127,6 +2129,7 @@ function toggleWatch(symbol, e) {
     showToast(symbol+' added to watchlist ★');
   }
   ls.setItem('da_watchlist', JSON.stringify(State.watchlist));
+  saveCurrentProfile();
   renderWatchlist();
 }
 
@@ -2195,6 +2198,7 @@ function addToWatchlist(symbol, e) {
   if (!State.watchlist.includes(symbol)) {
     State.watchlist.push(symbol);
     ls.setItem('da_watchlist', JSON.stringify(State.watchlist));
+    saveCurrentProfile();
     const q = State.quotes[symbol];
     if (q && q.c) saveWatchPrice(symbol, q.c);
     showToast(symbol+' added to watchlist ★');
@@ -2299,6 +2303,7 @@ function addHolding() {
   const next = [...State.holdings, {id:'h'+Date.now(), symbol, shares, avgCost:cost}];
   State.holdings = next;
   ls.setItem('da_holdings', JSON.stringify(next));
+  saveCurrentProfile();
   ['add-symbol','add-shares','add-cost'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('add-form').classList.remove('open');
   showToast('✓ '+symbol+' added to portfolio');
@@ -2308,6 +2313,7 @@ function addHolding() {
 function removeHolding(id) {
   State.holdings = State.holdings.filter(h=>h.id!==id);
   ls.setItem('da_holdings', JSON.stringify(State.holdings));
+  saveCurrentProfile();
   renderPortfolio();
   showToast('Holding removed');
 }
@@ -2743,6 +2749,7 @@ function handleCSVImport(event) {
     }
     if (imported > 0) {
       ls.setItem('da_holdings', JSON.stringify(State.holdings));
+      saveCurrentProfile();
       showToast('✓ Imported '+imported+' holding'+(imported>1?'s':''));
       initPortfolio();
     } else {
@@ -2862,6 +2869,7 @@ function importHoldingsFromArray(arr) {
   });
   if (imported > 0) {
     ls.setItem('da_holdings', JSON.stringify(State.holdings));
+    saveCurrentProfile();
     showToast('✓ Imported '+imported+' holding'+(imported>1?'s':'')+' from PDF');
     initPortfolio();
   } else {
