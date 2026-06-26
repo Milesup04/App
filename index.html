@@ -1727,7 +1727,17 @@ function renderTrackRecord() {
   if (!el) return;
   settlePicks();
   const history = getPickHistory().filter(h => h.settled && h.returnPct !== null);
-  if (!history.length) { el.innerHTML = ''; return; }
+  if (!history.length) {
+    el.innerHTML = `<div style="margin:14px 0 6px">
+      <div class="section-title" style="margin-bottom:8px">AI Track Record</div>
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:20px;text-align:center">
+        <div style="font-size:32px;margin-bottom:8px">📊</div>
+        <div style="color:var(--text1);font-size:14px;font-weight:700;margin-bottom:6px">Building your track record…</div>
+        <div style="color:var(--text3);font-size:12px;line-height:1.6;max-width:240px;margin:0 auto">Once the AI makes picks today, come back tomorrow and it'll show you exactly how they performed — win rate, average return, and full history.</div>
+      </div>
+    </div>`;
+    return;
+  }
 
   // Stats
   const wins = history.filter(h => h.returnPct >= 0);
