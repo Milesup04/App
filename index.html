@@ -249,6 +249,7 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
 /* Toast */
 #toast{position:fixed;bottom:100px;left:50%;transform:translateX(-50%) translateY(16px);background:rgba(18,18,36,0.97);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:11px 20px;color:var(--text1);font-size:13px;font-weight:500;backdrop-filter:blur(20px);z-index:1000;opacity:0;transition:all .3s cubic-bezier(.4,0,.2,1);pointer-events:none;white-space:nowrap;max-width:300px;text-align:center}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#xp-toast.show{opacity:1}
 
 /* Animations */
 @keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
@@ -877,6 +878,7 @@ body.light .search-input{color:#0A0A18}
   <div id="home-indicator"><div></div></div>
 </div>
 <div id="toast"></div>
+<div id="xp-toast" style="position:absolute;bottom:90px;left:50%;transform:translateX(-50%);background:linear-gradient(135deg,rgba(0,212,255,0.15),rgba(191,90,242,0.15));border:1px solid rgba(0,212,255,0.3);border-radius:20px;padding:7px 14px;color:var(--blue);font-size:12px;font-weight:700;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .3s;z-index:997"></div>
 
 <!-- VOICE BRIEFING OVERLAY -->
 <div id="voice-overlay" style="display:none;position:absolute;inset:0;background:rgba(5,5,16,0.96);z-index:998;flex-direction:column;align-items:center;justify-content:center;padding:28px;backdrop-filter:blur(20px)">
@@ -1548,7 +1550,7 @@ function getAccounts() {
 function saveAccounts(obj) { ls.setItem('da_accounts', JSON.stringify(obj)); }
 
 // Keys we persist per-account
-const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency'];
+const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency','da_xp','da_streak','da_last_open','da_postmortems'];
 
 function saveCurrentProfile() {
   const email = ls.getItem('da_current_email');
@@ -1682,6 +1684,7 @@ function launchApp() {
   initHome();
   updateSettingsProfile();
   setTimeout(checkWatchlistAlerts, 3000);
+  setTimeout(checkDailyStreak, 800);
 }
 document.getElementById('screen-onboarding').querySelector('.btn-primary:last-of-type') && null;
 document.addEventListener('DOMContentLoaded',()=>{
@@ -1996,6 +1999,212 @@ function logPicksToHistory(picks, prices) {
   savePickHistory(history);
 }
 
+/* ====================================================
+   STREAK + XP SYSTEM
+   ==================================================== */
+const XP_ACTIONS = {daily_open:20, view_picks:15, add_holding:30, review_postmortem:50, onboarding:100, add_watchlist:10};
+const XP_LEVELS = [
+  {min:0,    name:'Rookie',    icon:'🌱'},
+  {min:200,  name:'Trader',    icon:'📈'},
+  {min:500,  name:'Analyst',   icon:'🔍'},
+  {min:1000, name:'Expert',    icon:'💡'},
+  {min:2500, name:'Alpha',     icon:'⚡'},
+  {min:5000, name:'Legend',    icon:'🏆'},
+];
+
+function getXPState() {
+  return {
+    xp: parseInt(ls.getItem('da_xp')||'0'),
+    streak: parseInt(ls.getItem('da_streak')||'0'),
+    lastOpen: ls.getItem('da_last_open')||'',
+  };
+}
+
+function getLevel(xp) {
+  let lvl = XP_LEVELS[0];
+  for (const l of XP_LEVELS) { if (xp >= l.min) lvl = l; else break; }
+  const idx = XP_LEVELS.indexOf(lvl);
+  const next = XP_LEVELS[idx+1];
+  const pct = next ? Math.round((xp - lvl.min) / (next.min - lvl.min) * 100) : 100;
+  return {...lvl, next, pct, xp};
+}
+
+function awardXP(action) {
+  const pts = XP_ACTIONS[action] || 0;
+  if (!pts) return;
+  const prev = parseInt(ls.getItem('da_xp')||'0');
+  const next = prev + pts;
+  ls.setItem('da_xp', String(next));
+  saveCurrentProfile();
+  // Level-up check
+  const prevLvl = getLevel(prev);
+  const nextLvl = getLevel(next);
+  if (nextLvl.name !== prevLvl.name) {
+    setTimeout(() => showXPToast(`🎉 Level up! You're now ${nextLvl.icon} ${nextLvl.name}`, true), 400);
+  } else {
+    showXPToast(`+${pts} XP · ${action.replace(/_/g,' ')}`);
+  }
+  updateStreakWidget();
+}
+
+function showXPToast(msg, big=false) {
+  const t = document.getElementById('xp-toast');
+  if (!t) return;
+  t.textContent = msg;
+  t.style.fontSize = big ? '14px' : '12px';
+  t.style.padding = big ? '10px 18px' : '7px 14px';
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), big ? 3000 : 2000);
+}
+
+function checkDailyStreak() {
+  const today = new Date().toISOString().slice(0,10);
+  const yesterday = new Date(Date.now()-86400000).toISOString().slice(0,10);
+  const state = getXPState();
+  if (state.lastOpen === today) { updateStreakWidget(); return; } // already counted today
+  let newStreak = 1;
+  if (state.lastOpen === yesterday) newStreak = state.streak + 1;
+  ls.setItem('da_streak', String(newStreak));
+  ls.setItem('da_last_open', today);
+  saveCurrentProfile();
+  if (newStreak > 1) setTimeout(() => showXPToast(`🔥 ${newStreak}-day streak! +20 XP`), 1200);
+  awardXP('daily_open');
+  updateStreakWidget();
+  // Morning notification check (7am–10am)
+  const h = new Date().getHours();
+  if (h >= 7 && h < 10) scheduleMorningNotif();
+}
+
+function buildStreakWidgetHtml() {
+  const {xp, streak} = getXPState();
+  const lvl = getLevel(xp);
+  const next = lvl.next;
+  return `
+    <div style="display:flex;align-items:center;gap:10px">
+      <div style="text-align:center;min-width:44px">
+        <div style="font-size:20px">${streak >= 3 ? '🔥' : '📅'}</div>
+        <div style="color:var(--text1);font-size:14px;font-weight:800;line-height:1">${streak}</div>
+        <div style="color:var(--text3);font-size:9px;font-weight:600;text-transform:uppercase">STREAK</div>
+      </div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div style="display:flex;align-items:center;gap:5px">
+            <span style="font-size:14px">${lvl.icon}</span>
+            <span style="color:var(--text1);font-size:13px;font-weight:700">${lvl.name}</span>
+          </div>
+          <span style="color:var(--text2);font-size:11px;font-weight:600">${xp.toLocaleString()} XP</span>
+        </div>
+        <div style="background:rgba(255,255,255,0.06);border-radius:4px;height:5px;overflow:hidden">
+          <div style="background:linear-gradient(90deg,var(--blue),var(--purple));height:100%;width:${lvl.pct}%;border-radius:4px;transition:width .5s ease"></div>
+        </div>
+        ${next ? `<div style="color:var(--text3);font-size:10px;margin-top:3px">${(next.min-xp).toLocaleString()} XP to ${next.icon} ${next.name}</div>` : '<div style="color:var(--gold);font-size:10px;margin-top:3px">Max level reached 🏆</div>'}
+      </div>
+    </div>`;
+}
+
+function updateStreakWidget() {
+  const el = document.getElementById('streak-widget');
+  if (el) el.innerHTML = buildStreakWidgetHtml();
+}
+
+/* ====================================================
+   MORNING NOTIFICATIONS
+   ==================================================== */
+function scheduleMorningNotif() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'denied') return;
+  // Check if already sent today
+  const today = new Date().toISOString().slice(0,10);
+  if (ls.getItem('da_notif_sent') === today) return;
+  const sendNotif = () => {
+    ls.setItem('da_notif_sent', today);
+    // Find top mover for personalised message
+    const movers = Object.entries(State.quotes)
+      .filter(([,q]) => q && q.dp != null)
+      .sort((a,b) => Math.abs(b[1].dp) - Math.abs(a[1].dp));
+    const top = movers[0];
+    const name = State.userName || 'Investor';
+    const body = top
+      ? `${top[0]} is ${top[1].dp >= 0 ? 'up' : 'down'} ${Math.abs(top[1].dp).toFixed(1)}% — your AI briefing is ready.`
+      : `Your daily AI picks and market briefing are ready.`;
+    try {
+      new Notification(`Good morning, ${name} 👋`, {body, icon:'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">📈</text></svg>', tag:'morning-brief'});
+    } catch(e) {}
+  };
+  if (Notification.permission === 'granted') {
+    sendNotif();
+  } else {
+    Notification.requestPermission().then(p => { if (p === 'granted') sendNotif(); });
+  }
+}
+
+function requestNotifPermission() {
+  if (!('Notification' in window)) { showToast('Notifications not supported on this device'); return; }
+  Notification.requestPermission().then(p => {
+    if (p === 'granted') showToast('✓ Morning briefing notifications enabled');
+    else showToast('Notifications blocked — check your device settings');
+  });
+}
+
+/* ====================================================
+   AI POST-MORTEM
+   ==================================================== */
+function getPostMortems() {
+  try { return JSON.parse(ls.getItem('da_postmortems')||'{}'); } catch(e) { return {}; }
+}
+function savePostMortems(obj) { ls.setItem('da_postmortems', JSON.stringify(obj)); }
+
+async function generatePostMortem(entry) {
+  const key = `${entry.symbol}_${entry.date}_${entry.session}`;
+  const cache = getPostMortems();
+  if (cache[key]) return cache[key];
+  if (!Keys.groq && !Keys.anthropic) return null;
+  const direction = entry.returnPct >= 0 ? 'gained' : 'lost';
+  const prompt = `You are a candid AI investment analyst reviewing your own past pick.
+You picked ${entry.symbol} (${entry.name}) on ${entry.date} ${entry.session} session.
+Original thesis: "${entry.rationale || 'momentum and market conditions'}"
+Result: The stock ${direction} ${Math.abs(entry.returnPct).toFixed(2)}% (entry ${fmtPrice(entry.entryPrice)}, exit ${fmtPrice(entry.exitPrice)}).
+Write exactly 3 sentences in first person as the AI:
+1. What your reasoning was at the time.
+2. Whether the thesis played out or not and why.
+3. One specific thing to watch or learn from this for future picks.
+Be specific, honest, and direct. No disclaimers. No bullet points. 3 sentences only.`;
+  try {
+    const text = await callClaude([{role:'user', content:prompt}]);
+    cache[key] = text;
+    savePostMortems(cache);
+    saveCurrentProfile();
+    return text;
+  } catch(e) { return null; }
+}
+
+async function loadPostMortem(pmKey, elId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const isOpen = el.style.display === 'block';
+  el.style.display = isOpen ? 'none' : 'block';
+  if (isOpen) return;
+  const cache = getPostMortems();
+  if (cache[pmKey]) {
+    el.innerHTML = `<div style="color:var(--text2);font-size:12px;line-height:1.7">${cache[pmKey]}</div>`;
+    return;
+  }
+  el.innerHTML = '<div style="color:var(--text3);font-size:12px">Generating AI analysis…</div>';
+  // Find the history entry
+  const history = getPickHistory();
+  const [symbol, date, session] = pmKey.split('_');
+  const entry = history.find(h => h.symbol === symbol && h.date === date && h.session === session);
+  if (!entry) { el.innerHTML = '<div style="color:var(--text3);font-size:12px">Pick not found.</div>'; return; }
+  const text = await generatePostMortem(entry);
+  if (text) {
+    el.innerHTML = `<div style="color:var(--text2);font-size:12px;line-height:1.7">${text}</div>`;
+    awardXP('review_postmortem');
+  } else {
+    el.innerHTML = '<div style="color:var(--text3);font-size:12px">Add a Groq key in Settings to unlock AI analysis (free!).</div>';
+  }
+}
+
 function renderTrackRecord() {
   const el = document.getElementById('perf-section');
   if (!el) return;
@@ -2003,6 +2212,7 @@ function renderTrackRecord() {
   const history = getPickHistory().filter(h => h.settled && h.returnPct !== null);
   if (!history.length) {
     el.innerHTML = `<div style="margin:14px 0 6px">
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:14px;margin-bottom:12px">${buildStreakWidgetHtml()}</div>
       <div class="section-title" style="margin-bottom:8px">AI Track Record</div>
       <div style="background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:20px;text-align:center">
         <div style="font-size:32px;margin-bottom:8px">📊</div>
@@ -2030,24 +2240,38 @@ function renderTrackRecord() {
   const wrColor = winRate >= 70 ? 'var(--green)' : winRate >= 50 ? 'var(--gold)' : 'var(--red)';
   const arColor = avgReturn >= 0 ? 'var(--green)' : 'var(--red)';
 
-  // History rows (most recent first)
-  const rows = [...history].reverse().slice(0,10).map(h => {
+  // History rows (most recent first) with post-mortem
+  const postmortems = getPostMortems();
+  const rows = [...history].reverse().slice(0,10).map((h,i) => {
     const isUp = h.returnPct >= 0;
     const col = isUp ? 'var(--green)' : 'var(--red)';
     const sign = isUp ? '+' : '';
     const dateStr = new Date(h.pickedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'});
-    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
-      <div style="width:36px;height:36px;border-radius:10px;background:${isUp?'rgba(0,255,135,0.1)':'rgba(255,59,92,0.1)'};border:1px solid ${isUp?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--text1);flex-shrink:0">${h.symbol.slice(0,4)}</div>
-      <div style="flex:1;min-width:0">
-        <div style="color:var(--text1);font-size:13px;font-weight:700">${h.symbol} <span style="color:var(--text3);font-size:10px;font-weight:400">${h.session} · ${dateStr}</span></div>
-        <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${fmtPrice(h.entryPrice)} → ${fmtPrice(h.exitPrice)}${h.holdPeriod?' · '+h.holdPeriod:''}</div>
+    const pmKey = `${h.symbol}_${h.date}_${h.session}`;
+    const pm = postmortems[pmKey];
+    const pmId = `pm-${pmKey.replace(/[^a-z0-9]/gi,'-')}`;
+    return `<div style="border-bottom:1px solid var(--border);padding:10px 0">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:36px;height:36px;border-radius:10px;background:${isUp?'rgba(0,255,135,0.1)':'rgba(255,59,92,0.1)'};border:1px solid ${isUp?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--text1);flex-shrink:0">${h.symbol.slice(0,4)}</div>
+        <div style="flex:1;min-width:0">
+          <div style="color:var(--text1);font-size:13px;font-weight:700">${h.symbol} <span style="color:var(--text3);font-size:10px;font-weight:400">${h.session} · ${dateStr}</span></div>
+          <div style="color:var(--text3);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${fmtPrice(h.entryPrice)} → ${fmtPrice(h.exitPrice)}${h.holdPeriod?' · '+h.holdPeriod:''}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <div style="color:${col};font-size:13px;font-weight:800">${isUp?'▲':'▼'} ${sign}${h.returnPct.toFixed(2)}%</div>
+          ${(Keys.groq||Keys.anthropic) ? `<button onclick="loadPostMortem('${pmKey}','${pmId}')" style="background:${pm?'rgba(0,212,255,0.08)':'rgba(255,255,255,0.04)'};border:1px solid ${pm?'rgba(0,212,255,0.2)':'var(--border)'};border-radius:6px;padding:3px 7px;color:${pm?'var(--blue)':'var(--text3)'};font-size:10px;cursor:pointer;margin-top:3px;display:block;width:100%">${pm?'🧠 Review':'🧠 Analyse'}</button>` : ''}
+        </div>
       </div>
-      <div style="color:${col};font-size:13px;font-weight:800;flex-shrink:0">${isUp?'▲':'▼'} ${sign}${h.returnPct.toFixed(2)}%</div>
+      <div id="${pmId}" style="display:none;margin-top:8px;background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.12);border-radius:10px;padding:10px 12px">
+        ${pm ? `<div style="color:var(--text2);font-size:12px;line-height:1.7">${pm}</div>` : '<div style="color:var(--text3);font-size:12px">Loading AI analysis…</div>'}
+      </div>
     </div>`;
   }).join('');
 
+  const streakHtml = buildStreakWidgetHtml();
   el.innerHTML = `
   <div style="margin:14px 0 6px">
+    <div style="background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:14px;margin-bottom:12px">${streakHtml}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div class="section-title" style="margin:0">AI Track Record</div>
       <span class="pill ${winRate>=60?'green':winRate>=45?'gold':'red'}">${history.length} picks tracked</span>
@@ -2323,6 +2547,7 @@ function addToWatchlist(symbol, e) {
     State.watchlist.push(symbol);
     ls.setItem('da_watchlist', JSON.stringify(State.watchlist));
     saveCurrentProfile();
+    awardXP('add_watchlist');
     const q = State.quotes[symbol];
     if (q && q.c) saveWatchPrice(symbol, q.c);
     showToast(symbol+' added to watchlist ★');
@@ -2428,6 +2653,7 @@ function addHolding() {
   State.holdings = next;
   ls.setItem('da_holdings', JSON.stringify(next));
   saveCurrentProfile();
+  awardXP('add_holding');
   ['add-symbol','add-shares','add-cost'].forEach(id=>document.getElementById(id).value='');
   document.getElementById('add-form').classList.remove('open');
   showToast('✓ '+symbol+' added to portfolio');
@@ -2657,7 +2883,8 @@ const toggleStates = {notif:true, daily:true, market:true};
 function toggleSetting(key) {
   toggleStates[key] = !toggleStates[key];
   document.getElementById('toggle-'+key).className = 'toggle '+(toggleStates[key]?'on':'off');
-  showToast(key.charAt(0).toUpperCase()+key.slice(1)+' '+(toggleStates[key]?'enabled':'disabled'));
+  if (key === 'notif' && toggleStates[key]) requestNotifPermission();
+  else showToast(key.charAt(0).toUpperCase()+key.slice(1)+' '+(toggleStates[key]?'enabled':'disabled'));
 }
 
 function signOut() {
