@@ -255,6 +255,8 @@ body{background:#050510;font-family:-apple-system,BlinkMacSystemFont,'Inter',san
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulse{0%,100%{opacity:.5}50%{opacity:1}}
 @keyframes glowPulse{0%,100%{opacity:.6}50%{opacity:1}}
+@keyframes voiceRing{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.6);opacity:0}}
+@keyframes voiceWave{0%,100%{transform:scaleY(1)}50%{transform:scaleY(2.2)}}
 @keyframes slideInRight{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 @keyframes slideInLeft{from{transform:translateX(-40px);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -478,6 +480,12 @@ body.light .search-input{color:#0A0A18}
           <div id="live-indicator" style="display:flex;align-items:center;gap:5px;background:rgba(0,255,135,0.08);border:1px solid rgba(0,255,135,0.15);border-radius:10px;padding:5px 9px">
             <div class="live-dot"></div>
             <span style="color:var(--green);font-size:10px;font-weight:700">LIVE</span>
+          </div>
+          <div id="voice-btn" onclick="toggleVoiceBriefing()" style="width:38px;height:38px;border-radius:12px;background:var(--glass);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;position:relative" title="Voice Briefing">🎙️
+            <div id="voice-rings" style="display:none;position:absolute;inset:-4px;border-radius:16px;pointer-events:none">
+              <div style="position:absolute;inset:0;border-radius:16px;border:2px solid var(--blue);animation:voiceRing 1.2s ease-out infinite;opacity:.7"></div>
+              <div style="position:absolute;inset:0;border-radius:16px;border:2px solid var(--blue);animation:voiceRing 1.2s ease-out .4s infinite;opacity:.4"></div>
+            </div>
           </div>
           <div onclick="switchTab('settings')" style="width:38px;height:38px;border-radius:12px;background:var(--glass);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer">⚙️</div>
         </div>
@@ -869,6 +877,28 @@ body.light .search-input{color:#0A0A18}
   <div id="home-indicator"><div></div></div>
 </div>
 <div id="toast"></div>
+
+<!-- VOICE BRIEFING OVERLAY -->
+<div id="voice-overlay" style="display:none;position:absolute;inset:0;background:rgba(5,5,16,0.96);z-index:998;flex-direction:column;align-items:center;justify-content:center;padding:28px;backdrop-filter:blur(20px)">
+  <div style="font-size:52px;margin-bottom:16px">🎙️</div>
+  <div style="color:var(--text1);font-size:20px;font-weight:800;margin-bottom:6px;letter-spacing:-.3px;text-align:center">Daily Alpha Briefing</div>
+  <div id="voice-status" style="color:var(--blue);font-size:13px;font-weight:600;margin-bottom:28px;text-align:center">Generating your briefing…</div>
+  <!-- Sound wave bars -->
+  <div id="voice-wave" style="display:none;align-items:flex-end;justify-content:center;gap:4px;height:44px;margin-bottom:24px">
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0s;height:20px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.1s;height:32px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.2s;height:44px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.15s;height:36px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.25s;height:28px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.05s;height:20px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.3s;height:38px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.12s;height:26px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.22s;height:40px"></div>
+  </div>
+  <div id="voice-script" style="color:var(--text2);font-size:12px;line-height:1.7;text-align:center;max-width:300px;max-height:130px;overflow:hidden;margin-bottom:28px"></div>
+  <button id="voice-stop-btn" onclick="stopVoiceBriefing()" style="display:none;padding:14px 36px;border-radius:20px;background:rgba(255,59,92,0.12);border:1px solid rgba(255,59,92,0.3);color:var(--red);font-size:15px;font-weight:700;cursor:pointer">⏹ Stop</button>
+  <button id="voice-close-btn" onclick="closeVoiceOverlay()" style="margin-top:14px;background:none;border:none;color:var(--text3);font-size:13px;cursor:pointer">✕ Close</button>
+</div>
 </div><!-- end flex wrapper -->
 <div id="app-sidebar">
   <div class="sb-logo">📈</div>
@@ -3241,6 +3271,184 @@ function obSpawnConfetti() {
     dot.style.animationDelay = (Math.random() * 0.8) + 's';
     dot.style.animationDuration = (1.8 + Math.random() * 0.8) + 's';
     step6.appendChild(dot);
+  }
+}
+
+/* ====================================================
+   VOICE BRIEFING
+   ==================================================== */
+let _voiceSpeaking = false;
+let _voiceUtterance = null;
+
+async function toggleVoiceBriefing() {
+  if (_voiceSpeaking) { stopVoiceBriefing(); return; }
+  if (!Keys.groq && !Keys.anthropic) {
+    showToast('Add a Groq key in Settings for voice briefings (free!)');
+    return;
+  }
+  showVoiceOverlay();
+  await startVoiceBriefing();
+}
+
+function showVoiceOverlay() {
+  const ov = document.getElementById('voice-overlay');
+  ov.style.display = 'flex';
+  document.getElementById('voice-wave').style.display = 'none';
+  document.getElementById('voice-status').textContent = 'Generating your briefing…';
+  document.getElementById('voice-status').style.color = 'var(--blue)';
+  document.getElementById('voice-script').textContent = '';
+  document.getElementById('voice-stop-btn').style.display = 'none';
+  document.getElementById('voice-close-btn').style.display = 'block';
+  document.getElementById('voice-rings').style.display = 'block';
+}
+
+function closeVoiceOverlay() {
+  stopVoiceBriefing();
+  document.getElementById('voice-overlay').style.display = 'none';
+  document.getElementById('voice-rings').style.display = 'none';
+}
+
+function stopVoiceBriefing() {
+  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  _voiceSpeaking = false;
+  _voiceUtterance = null;
+  document.getElementById('voice-wave').style.display = 'none';
+  document.getElementById('voice-rings').style.display = 'none';
+  document.getElementById('voice-stop-btn').style.display = 'none';
+  document.getElementById('voice-close-btn').style.display = 'block';
+  document.getElementById('voice-status').textContent = 'Briefing stopped.';
+  document.getElementById('voice-status').style.color = 'var(--text3)';
+}
+
+async function startVoiceBriefing() {
+  // Build context from current state
+  const name = State.userName || 'Investor';
+  const date = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
+  const timeOfDay = new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening';
+
+  // Collect market data
+  const indices = ['SPY','QQQ','DIA'].map(s => {
+    const q = State.quotes[s];
+    if (!q) return null;
+    const names = {SPY:'S&P 500', QQQ:'Nasdaq', DIA:'Dow Jones'};
+    const pct = (q.dp??0).toFixed(2);
+    return `${names[s]} is ${q.dp>=0?'up':'down'} ${Math.abs(pct)} percent`;
+  }).filter(Boolean);
+
+  // Current AI picks
+  const today = new Date().toISOString().slice(0,10);
+  const session = new Date().getHours() < 14 ? 'am' : 'pm';
+  let picks = [];
+  try {
+    const cached = ls.getItem(`da_ai_picks_${today}_${session}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      picks = (parsed.picks || parsed || []).slice(0,3);
+    }
+  } catch(e){}
+
+  // Portfolio snapshot
+  const holdCount = State.holdings.length;
+  let portContext = holdCount > 0 ? `The user holds ${holdCount} positions including ${State.holdings.slice(0,3).map(h=>h.symbol).join(', ')}.` : '';
+
+  // Track record
+  let trackContext = '';
+  try {
+    const history = JSON.parse(ls.getItem('da_pick_history')||'[]').filter(h=>h.settled && h.returnPct !== null);
+    if (history.length >= 3) {
+      const wins = history.filter(h=>h.returnPct>0).length;
+      const winRate = Math.round(wins/history.length*100);
+      const avgReturn = (history.reduce((s,h)=>s+h.returnPct,0)/history.length).toFixed(1);
+      trackContext = `Our AI picks have a ${winRate}% win rate with an average return of ${avgReturn}% based on ${history.length} settled picks.`;
+    }
+  } catch(e){}
+
+  const picksContext = picks.length > 0
+    ? `Today's top AI picks are: ${picks.map(p=>`${p.symbol} — ${p.name}, ${p.rationale?.slice(0,80)||''}`).join('; ')}.`
+    : 'AI picks are still loading.';
+
+  const prompt = `You are a friendly, confident financial AI assistant giving a spoken market briefing. Write a natural, conversational 60-second briefing (about 130 words) for ${name} on this ${timeOfDay}, ${date}.
+
+Market snapshot: ${indices.join('. ')}.
+${portContext}
+${picksContext}
+${trackContext}
+
+Rules:
+- Speak naturally as if talking to them directly — use "you" and "your"
+- Mention 1-2 of today's picks by name with a brief reason
+- If track record data exists, mention it confidently
+- End with one actionable suggestion or thing to watch
+- No disclaimers, no bullet points — pure spoken prose
+- Keep it under 140 words`;
+
+  try {
+    const text = await callClaude([{role:'user', content: prompt}]);
+    if (!text) throw new Error('No response');
+    speakBriefing(text);
+  } catch(e) {
+    document.getElementById('voice-status').textContent = 'Failed to generate briefing.';
+    document.getElementById('voice-status').style.color = 'var(--red)';
+    document.getElementById('voice-rings').style.display = 'none';
+    showToast('Voice briefing failed — check your API key');
+  }
+}
+
+function speakBriefing(text) {
+  if (!window.speechSynthesis) {
+    document.getElementById('voice-status').textContent = 'Speech not supported on this device.';
+    document.getElementById('voice-script').textContent = text;
+    return;
+  }
+  window.speechSynthesis.cancel();
+
+  const utter = new SpeechSynthesisUtterance(text);
+  _voiceUtterance = utter;
+  _voiceSpeaking = true;
+
+  // Pick a good voice — prefer a natural English voice
+  const voices = window.speechSynthesis.getVoices();
+  const preferred = voices.find(v => /samantha|karen|moira|daniel|google.*english/i.test(v.name) && /en/i.test(v.lang))
+    || voices.find(v => /en[-_]GB|en[-_]AU|en[-_]US/i.test(v.lang) && !v.name.includes('('))
+    || voices.find(v => /en/i.test(v.lang))
+    || voices[0];
+  if (preferred) utter.voice = preferred;
+  utter.rate = 0.95;
+  utter.pitch = 1.0;
+  utter.volume = 1.0;
+
+  document.getElementById('voice-status').textContent = 'Speaking…';
+  document.getElementById('voice-status').style.color = 'var(--green)';
+  document.getElementById('voice-script').textContent = text;
+  document.getElementById('voice-wave').style.display = 'flex';
+  document.getElementById('voice-stop-btn').style.display = 'block';
+  document.getElementById('voice-close-btn').style.display = 'none';
+  document.getElementById('voice-rings').style.display = 'block';
+
+  utter.onend = () => {
+    _voiceSpeaking = false;
+    document.getElementById('voice-wave').style.display = 'none';
+    document.getElementById('voice-rings').style.display = 'none';
+    document.getElementById('voice-status').textContent = 'Briefing complete ✓';
+    document.getElementById('voice-status').style.color = 'var(--green)';
+    document.getElementById('voice-stop-btn').style.display = 'none';
+    document.getElementById('voice-close-btn').style.display = 'block';
+  };
+  utter.onerror = () => {
+    _voiceSpeaking = false;
+    document.getElementById('voice-status').textContent = 'Playback error — try again.';
+    document.getElementById('voice-status').style.color = 'var(--red)';
+    document.getElementById('voice-wave').style.display = 'none';
+    document.getElementById('voice-rings').style.display = 'none';
+    document.getElementById('voice-stop-btn').style.display = 'none';
+    document.getElementById('voice-close-btn').style.display = 'block';
+  };
+
+  // iOS requires voices to be loaded first
+  if (window.speechSynthesis.getVoices().length === 0) {
+    window.speechSynthesis.addEventListener('voiceschanged', () => window.speechSynthesis.speak(utter), {once:true});
+  } else {
+    window.speechSynthesis.speak(utter);
   }
 }
 
