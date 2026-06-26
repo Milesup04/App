@@ -339,6 +339,7 @@ body.light .search-input{color:#0A0A18}
 #perf-section{margin-top:14px}
 .perf-card{background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:8px;display:flex;align-items:center;gap:10px}
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
 <body>
 <a href="#screen-wrap" class="skip-link">Skip to content</a>
@@ -550,8 +551,10 @@ body.light .search-input{color:#0A0A18}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
         <div style="color:var(--text1);font-size:20px;font-weight:800;letter-spacing:-.3px">Portfolio</div>
         <div style="display:flex;gap:6px">
-          <button onclick="triggerCSVImport()" style="background:var(--glass);border:1px solid var(--border);border-radius:11px;padding:7px 12px;color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">⬆ CSV</button>
+          <button onclick="triggerImport('csv')" style="background:var(--glass);border:1px solid var(--border);border-radius:11px;padding:7px 12px;color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">⬆ CSV</button>
+          <button onclick="triggerImport('pdf')" style="background:var(--glass);border:1px solid var(--border);border-radius:11px;padding:7px 12px;color:var(--text2);font-size:12px;font-weight:700;cursor:pointer">⬆ PDF</button>
           <input type="file" id="csv-import-input" accept=".csv" style="display:none" onchange="handleCSVImport(event)"/>
+          <input type="file" id="pdf-import-input" accept=".pdf" style="display:none" onchange="handlePDFImport(event)"/>
           <button onclick="toggleAddForm()" style="background:linear-gradient(135deg,#00D4FF,#0055FF);border:none;border-radius:11px;padding:7px 16px;color:#000;font-size:12px;font-weight:800;cursor:pointer;transition:opacity .2s">+ Add</button>
         </div>
       </div>
@@ -2552,8 +2555,8 @@ function calcRSI(closes, period) {
 /* ====================================================
    FEATURE 4: CSV IMPORT FOR HOLDINGS
    ==================================================== */
-function triggerCSVImport() {
-  document.getElementById('csv-import-input').click();
+function triggerImport(type) {
+  document.getElementById(type+'-import-input').click();
 }
 
 function handleCSVImport(event) {
@@ -2583,6 +2586,122 @@ function handleCSVImport(event) {
   };
   reader.readAsText(file);
   event.target.value = '';
+}
+
+async function handlePDFImport(event) {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+
+  showToast('📄 Reading PDF…');
+
+  try {
+    // Load PDF.js worker
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    } else {
+      showToast('PDF reader not loaded yet — try again');
+      return;
+    }
+
+    // Extract all text from PDF
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+    let fullText = '';
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      fullText += content.items.map(item => item.str).join(' ') + '\n';
+    }
+
+    // Try Groq first (handles any brokerage format intelligently)
+    if (Keys.groq || Keys.anthropic) {
+      showToast('🤖 AI parsing your statement…');
+      const truncated = fullText.slice(0, 3000);
+      const prompt = `Extract stock holdings from this brokerage statement text. Return ONLY a JSON array, no other text:
+[{"symbol":"AAPL","shares":10,"avgCost":150.00},...]
+Use real ticker symbols. Shares must be a positive number. avgCost is the average cost per share or current price if cost not shown. If a field is unclear, make your best guess.
+
+STATEMENT TEXT:
+${truncated}`;
+      try {
+        let raw = '';
+        if (Keys.groq) {
+          const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+            method:'POST',
+            headers:{'content-type':'application/json','authorization':'Bearer '+Keys.groq},
+            body: JSON.stringify({model:'llama-3.3-70b-versatile', max_tokens:600, temperature:0,
+              messages:[{role:'user', content:prompt}]})
+          });
+          const d = await res.json();
+          raw = d.choices?.[0]?.message?.content || '';
+        } else {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method:'POST',
+            headers:{'content-type':'application/json','x-api-key':Keys.anthropic,
+              'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+            body: JSON.stringify({model:'claude-sonnet-4-6', max_tokens:600,
+              messages:[{role:'user', content:prompt}]})
+          });
+          const d = await res.json();
+          raw = (d.content||[]).map(b=>b.text).join('');
+        }
+        const match = raw.match(/\[[\s\S]*?\]/);
+        if (match) {
+          const holdings = JSON.parse(match[0]);
+          importHoldingsFromArray(holdings);
+          return;
+        }
+      } catch(e) {}
+    }
+
+    // Fallback: regex parse common patterns
+    // Matches: AAPL   10   $150.00  or  AAPL,10,150  or  AAPL 10 shares @ 150
+    const patterns = [
+      /\b([A-Z]{1,5})\b[\s,]+(\d+(?:\.\d+)?)\s+(?:shares?)?[\s@$,]*(\d+(?:\.\d+)?)/gi,
+      /\b([A-Z]{1,5})\b.*?(\d+(?:\.\d+)?)\s+(?:shares?).*?\$(\d+(?:\.\d+)?)/gi,
+    ];
+    const found = {};
+    for (const pattern of patterns) {
+      let m;
+      while ((m = pattern.exec(fullText)) !== null) {
+        const sym = m[1].toUpperCase();
+        const shares = parseFloat(m[2]);
+        const price = parseFloat(m[3]);
+        // Filter out noise — skip common non-ticker words
+        const skip = ['THE','AND','FOR','FROM','DATE','PAGE','YEAR','TOTAL','CASH','FUND','PLAN','YOUR','THIS','WITH','THAT'];
+        if (skip.includes(sym) || shares <= 0 || price <= 0 || price > 100000) continue;
+        if (!found[sym]) found[sym] = {shares, avgCost: price};
+      }
+    }
+    if (Object.keys(found).length) {
+      importHoldingsFromArray(Object.entries(found).map(([symbol,v])=>({symbol,...v})));
+    } else {
+      showToast('Could not find holdings in PDF. Try CSV format instead.');
+    }
+  } catch(e) {
+    showToast('Error reading PDF: '+e.message);
+  }
+}
+
+function importHoldingsFromArray(arr) {
+  let imported = 0;
+  arr.forEach((h, i) => {
+    const symbol = (h.symbol||'').toUpperCase().trim();
+    const shares = parseFloat(h.shares);
+    const avgCost = parseFloat(h.avgCost || h.price || h.cost || 0);
+    if (!symbol || isNaN(shares) || shares <= 0) return;
+    const cost = avgCost > 0 ? avgCost : 1;
+    State.holdings.push({id:'h'+Date.now()+i, symbol, shares, avgCost: cost});
+    imported++;
+  });
+  if (imported > 0) {
+    ls.setItem('da_holdings', JSON.stringify(State.holdings));
+    showToast('✓ Imported '+imported+' holding'+(imported>1?'s':'')+' from PDF');
+    initPortfolio();
+  } else {
+    showToast('No valid holdings found in PDF');
+  }
 }
 
 /* ====================================================
