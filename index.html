@@ -451,7 +451,7 @@ body.light .search-input{color:#0A0A18}
         <button onclick="refreshMarkets()" style="background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:6px 12px;color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">↻ Refresh</button>
       </div>
       <div id="markets-setup-banner"></div>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px" id="markets-search-wrap" style="display:none">
+      <div style="display:none;gap:8px;align-items:center;margin-bottom:12px" id="markets-search-wrap">
         <div class="search-box" style="flex:1;margin-bottom:0">
           <span style="color:var(--text3)">🔍</span>
           <input class="search-input" id="markets-search" placeholder="Search stocks, ETFs, crypto…" oninput="marketsSearch()"/>
@@ -884,18 +884,33 @@ async function fetchQuote(symbol) {
   if (!key) throw new Error('NO_KEY');
   const now = Date.now();
   if (qCache[symbol] && now - qCache[symbol].ts < CACHE_TTL) return qCache[symbol].data;
-  const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${key}`);
-  if (!res.ok) throw new Error('HTTP '+res.status);
-  const data = await res.json();
-  if (!data.c) throw new Error('NO_DATA');
-  qCache[symbol] = {data, ts:now};
-  return data;
+  try {
+    const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${key}`);
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const data = await res.json();
+    if (!data.c) throw new Error('NO_DATA');
+    qCache[symbol] = {data, ts:now};
+    return data;
+  } catch(e) {
+    // Try persistent cache fallback
+    const persisted = loadQuoteCache();
+    if (persisted && persisted.data && persisted.data[symbol]) {
+      return persisted.data[symbol];
+    }
+    throw e;
+  }
 }
 
 async function fetchQuotes(syms) {
   const res = await Promise.allSettled(syms.map(s=>fetchQuote(s)));
   const out = {};
   res.forEach((r,i)=>{ if(r.status==='fulfilled') out[syms[i]]=r.value; });
+  if (Object.keys(out).length > 0) {
+    // Merge into persistent cache
+    const existing = loadQuoteCache();
+    const merged = existing ? {...existing.data, ...out} : out;
+    saveQuoteCache(merged);
+  }
   return out;
 }
 
@@ -971,10 +986,10 @@ function drawDonut(segments) {
 const SYS_PROMPT = `You are Alpha Assistant, an AI investing educator built into the Daily Alpha AI app. Respond in under 180 words. Use light markdown (**bold**, bullet lists). Be concrete and practical. Always end with a short disclaimer that this is educational only, not financial advice.`;
 
 async function fetchAIPicks() {
-  const today = new Date().toISOString().slice(0,10);
-  const cacheKey = 'da_ai_picks_' + today;
+  const cacheKey = getAIPicksCacheKey();
+  const session = new Date().getHours() < 12 ? 'Morning' : 'Afternoon';
   const cached = ls.getItem(cacheKey);
-  if (cached) { try { return JSON.parse(cached); } catch(e) {} }
+  if (cached) { try { const p = JSON.parse(cached); return Array.isArray(p) ? p : p.picks; } catch(e) {} }
 
   if (!Keys.groq && !Keys.anthropic) return null;
   if (!Keys.finnhub) return null;
@@ -1095,9 +1110,9 @@ ${trendLines || 'unavailable'}
 TODAY'S MARKET NEWS:
 ${newsLines || 'unavailable'}
 
-Choose 3 stocks where: (1) analyst recommendations lean bullish, (2) trend momentum is positive, (3) a news catalyst supports the move. Recommend a hold period based on trend strength. Return ONLY a valid JSON array, no other text:
-[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Why this stock now, citing analyst data and trend","trend":"Trend summary from the data above","holdPeriod":"e.g. 1–2 weeks","holdReason":"Why that timeframe based on trend","confidence":85},...]
-Confidence 55-96. Tickers must come from the Finnhub top 50 list above.`;
+Choose 3 stocks where: (1) analyst recommendations lean bullish, (2) trend momentum is positive, (3) a news catalyst supports the move. Recommend a hold period based on trend strength. Also include 2-3 rejected stocks with brief reasons. Return ONLY a valid JSON array, no other text:
+[{"symbol":"TICKER","name":"Full Company Name","sector":"Sector","rationale":"Why this stock now, citing analyst data and trend","trend":"Trend summary from the data above","holdPeriod":"e.g. 1–2 weeks","holdReason":"Why that timeframe based on trend","confidence":85},{"symbol":"TICKER","name":"Name","reason":"Why not picked"},...]
+Confidence 55-96. Tickers must come from the Finnhub top 50 list above. First 3 items are picks (no 'reason' field), last 2-3 are rejected (have 'reason' field, no confidence).`;
 
   try {
     let raw = '';
@@ -1123,8 +1138,11 @@ Confidence 55-96. Tickers must come from the Finnhub top 50 list above.`;
     }
     const match = raw.match(/\[[\s\S]*?\]/);
     if (!match) return null;
-    const picks = JSON.parse(match[0]).slice(0,3);
-    ls.setItem(cacheKey, JSON.stringify(picks));
+    const parsedAll = JSON.parse(match[0]);
+    const picks = parsedAll.filter(p => !p.reason).slice(0,3);
+    const rejected = parsedAll.filter(p => p.reason).slice(0,3);
+    const saveObj = {picks, rejected};
+    ls.setItem(cacheKey, JSON.stringify(saveObj));
     for(let i=ls.length-1;i>=0;i--){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
     return picks;
   } catch(e) { return null; }
@@ -1250,8 +1268,11 @@ function launchApp() {
   document.getElementById('screen-home').classList.add('active');
   document.getElementById('navbar').style.display='flex';
   document.getElementById('home-indicator').style.display='flex';
+  applyTheme();
   initHome();
   updateSettingsProfile();
+  // Check watchlist price alerts after a short delay
+  setTimeout(checkWatchlistAlerts, 3000);
 }
 document.getElementById('screen-onboarding').querySelector('.btn-primary:last-of-type') && null;
 // patch ob-6 button
@@ -1325,7 +1346,8 @@ function initHome() {
 
   const hasAI = (Keys.groq || Keys.anthropic) && Keys.finnhub;
   if (hasAI) {
-    document.getElementById('home-recs').innerHTML = '<div style="color:var(--text3);font-size:11px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> Analysing today\'s news &amp; trends…</div>';
+    const sess2 = new Date().getHours() < 12 ? 'Morning' : 'Afternoon';
+    document.getElementById('home-recs').innerHTML = '<div style="color:var(--text3);font-size:11px;padding:8px 0;display:flex;align-items:center;gap:6px"><span style="animation:spin 1s linear infinite;display:inline-block">⟳</span> '+sess2+' picks…</div>';
   }
 
   // Load home data — AI picks failures never block the rest of the screen
@@ -1357,6 +1379,13 @@ function initHome() {
 
   loadHome_().catch(()=>{
     document.getElementById('home-recs').innerHTML = '<div style="color:var(--red);font-size:12px;padding:8px 0">Error loading data. Check your Finnhub key in Settings.</div>';
+    // Show offline banner if we have cached data
+    const cached = loadQuoteCache();
+    if (cached && cached.data && Object.keys(cached.data).length) {
+      Object.assign(State.quotes, cached.data);
+      document.getElementById('offline-banner').style.display = 'block';
+      renderHomePortfolio(); renderHomeIndices(); renderHomeMovers(); renderHomeGauge();
+    }
   });
 }
 
@@ -1469,6 +1498,26 @@ function renderHomeRecs() {
       el.style.width = el.getAttribute('data-target')+'%';
     });
   }, 100);
+
+  // Feature 9: "Why these 3?" collapsed section with rejected stocks
+  const cacheKey2 = getAIPicksCacheKey();
+  const cachedFull = ls.getItem(cacheKey2);
+  let rejected = [];
+  if (cachedFull) { try { const p = JSON.parse(cachedFull); if (!Array.isArray(p) && p.rejected) rejected = p.rejected; } catch(e) {} }
+  if (candidates.length) {
+    const whyDiv = document.createElement('div');
+    whyDiv.style.cssText = 'margin-top:8px';
+    whyDiv.innerHTML = `<div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none';this.querySelector('.why-arrow').textContent=this.nextElementSibling.style.display==='none'?'›':'⌄'" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--glass);border:1px solid var(--border);border-radius:12px;cursor:pointer;font-size:12px;color:var(--text2);font-weight:600">
+      <span>💡 Why these 3?</span><span class="why-arrow">›</span>
+    </div>
+    <div style="display:none;background:var(--glass);border:1px solid var(--border);border-top:none;border-radius:0 0 12px 12px;padding:10px 14px">
+      ${rejected.length ? rejected.map(r => `<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.04)">
+        <span style="color:var(--text1);font-weight:700;font-size:12px">${r.symbol}</span>
+        <span style="color:var(--text3);font-size:11px;margin-left:6px">${r.reason}</span>
+      </div>`).join('') : '<div style="color:var(--text3);font-size:11px">Other candidates were passed over due to weaker momentum or mixed analyst signals.</div>'}
+    </div>`;
+    document.getElementById('home-recs').appendChild(whyDiv);
+  }
 }
 
 function toggleRec(card, symbol, price) {
@@ -1494,7 +1543,7 @@ function renderHomeMovers() {
   const all = MOVER_SYMS.filter(s=>State.quotes[s]).map(s=>q2stock(s,State.quotes[s]));
   const top3 = all.sort((a,b)=>Math.abs(b.pct)-Math.abs(a.pct)).slice(0,5);
   document.getElementById('home-movers').innerHTML = top3.length ? top3.map(s=>`
-    <div class="mover-row">
+    <div class="mover-row" onclick="openStockDetail('${s.symbol}')" style="cursor:pointer">
       <div class="mover-icon" style="background:${s.pct>=0?'rgba(0,255,135,0.10)':'rgba(255,59,92,0.10)'};border:1px solid ${s.pct>=0?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'}">${s.symbol.slice(0,4)}</div>
       <div style="flex:1">
         <div style="color:var(--text1);font-size:13px;font-weight:700">${s.symbol}</div>
@@ -1621,7 +1670,7 @@ function renderWatchlist() {
   const rows = State.watchlist.filter(s=>State.quotes[s]).map(s=>q2stock(s,State.quotes[s]));
   document.getElementById('markets-watchlist').innerHTML = rows.length
     ? rows.map(s=>`
-      <div class="stock-row">
+      <div class="stock-row" onclick="openStockDetail('${s.symbol}')" style="cursor:pointer">
         <div class="stock-icon" style="background:${s.pct>=0?'rgba(0,255,135,0.10)':'rgba(255,59,92,0.10)'};border:1px solid ${s.pct>=0?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'}">${s.symbol.slice(0,4)}</div>
         <div style="flex:1"><div class="stock-name">${s.symbol}</div><div class="stock-sub">${s.name.split(' ').slice(0,2).join(' ')}</div></div>
         <div style="margin-right:8px">${generateSparkline(s.pct,14)}</div>
@@ -1638,6 +1687,9 @@ function toggleWatch(symbol, e) {
     showToast(symbol+' removed from watchlist');
   } else {
     State.watchlist.push(symbol);
+    // Save current price for alert tracking
+    const q = State.quotes[symbol];
+    if (q && q.c) saveWatchPrice(symbol, q.c);
     showToast(symbol+' added to watchlist ★');
   }
   ls.setItem('da_watchlist', JSON.stringify(State.watchlist));
@@ -1709,6 +1761,8 @@ function addToWatchlist(symbol, e) {
   if (!State.watchlist.includes(symbol)) {
     State.watchlist.push(symbol);
     ls.setItem('da_watchlist', JSON.stringify(State.watchlist));
+    const q = State.quotes[symbol];
+    if (q && q.c) saveWatchPrice(symbol, q.c);
     showToast(symbol+' added to watchlist ★');
     renderWatchlist();
   } else {
@@ -1763,6 +1817,9 @@ function renderPortfolio() {
       <span style="color:var(--text2);font-size:12px;flex:1">${sec}</span>
       <span style="color:var(--text1);font-size:12px;font-weight:700">${totalVal>0?((val/totalVal)*100).toFixed(1):0}%</span>
     </div>`).join('');
+  // Bar chart & tax efficiency
+  drawPortfolioBarChart(enriched);
+  renderTaxEfficiency(enriched, totalVal);
   // Holdings
   document.getElementById('holdings-title').textContent = `Holdings (${enriched.length})`;
   document.getElementById('holdings-list').innerHTML = enriched.length ? enriched.map(h=>{
@@ -2064,6 +2121,370 @@ setInterval(updateClock, 30000);
 updateClock();
 
 /* ====================================================
+   FEATURE 1: DARK/LIGHT MODE TOGGLE
+   ==================================================== */
+function toggleTheme() {
+  const isLight = document.body.classList.toggle('light');
+  ls.setItem('da_theme', isLight ? 'light' : 'dark');
+  document.getElementById('theme-toggle-btn').textContent = isLight ? '☀️' : '🌙';
+}
+
+function applyTheme() {
+  const saved = ls.getItem('da_theme');
+  if (saved === 'light') {
+    document.body.classList.add('light');
+    const btn = document.getElementById('theme-toggle-btn');
+    if (btn) btn.textContent = '☀️';
+  }
+}
+
+/* ====================================================
+   FEATURE 2: SWIPE BETWEEN SCREENS
+   ==================================================== */
+(function() {
+  const wrap = document.getElementById('screen-wrap');
+  const TABS = ['home','markets','portfolio','ai','settings'];
+  let touchStartX = 0, touchStartY = 0;
+  wrap.addEventListener('touchstart', e => {
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+  }, {passive:true});
+  wrap.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    const dy = e.changedTouches[0].clientY - touchStartY;
+    if (Math.abs(dx) > 50 && Math.abs(dy) < 80) {
+      const cur = TABS.indexOf(State.activeTab);
+      if (dx < 0 && cur < TABS.length - 1) switchTab(TABS[cur + 1]);
+      else if (dx > 0 && cur > 0) switchTab(TABS[cur - 1]);
+    }
+  }, {passive:true});
+})();
+
+/* ====================================================
+   FEATURE 3: STOCK DETAIL MODAL
+   ==================================================== */
+function openStockDetail(symbol) {
+  const modal = document.getElementById('stock-modal');
+  modal.classList.add('open');
+  modal.scrollTop = 0;
+  const info = SYMBOL_INFO[symbol] || {name:symbol, sector:'Other'};
+  document.getElementById('modal-symbol').textContent = symbol;
+  document.getElementById('modal-name').textContent = info.name;
+  document.getElementById('modal-sector').textContent = info.sector;
+  const q = State.quotes[symbol];
+  if (q) {
+    document.getElementById('modal-price').textContent = '$' + q.c.toFixed(2);
+    const pct = q.dp ?? 0;
+    const el = document.getElementById('modal-change');
+    el.textContent = (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+    el.style.color = pct >= 0 ? 'var(--green)' : 'var(--red)';
+  }
+  document.getElementById('modal-30d').textContent = '…';
+  document.getElementById('modal-rsi').textContent = '…';
+  document.getElementById('modal-news').innerHTML = '<div style="color:var(--text3);font-size:12px">Loading…</div>';
+
+  if (!Keys.finnhub) {
+    document.getElementById('modal-news').innerHTML = '<div style="color:var(--text3);font-size:12px">Add Finnhub key for charts & news.</div>';
+    return;
+  }
+
+  // Fetch candles for chart + RSI + 30d
+  const nowTs = Math.floor(Date.now()/1000);
+  const fromTs = nowTs - 31*24*3600;
+  fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=D&from=${fromTs}&to=${nowTs}&token=${Keys.finnhub}`)
+    .then(r => r.json())
+    .then(data => {
+      if (!data || data.s === 'no_data' || !data.c || data.c.length < 2) return;
+      const closes = data.c;
+      // Draw line chart
+      drawStockChart(closes, symbol);
+      // 30d change
+      const ch30 = ((closes[closes.length-1] - closes[0]) / closes[0] * 100);
+      const el30 = document.getElementById('modal-30d');
+      el30.textContent = (ch30 >= 0 ? '+' : '') + ch30.toFixed(1) + '%';
+      el30.style.color = ch30 >= 0 ? 'var(--green)' : 'var(--red)';
+      // RSI 14
+      const rsiVal = calcRSI(closes, 14);
+      const rsiEl = document.getElementById('modal-rsi');
+      rsiEl.textContent = rsiVal !== null ? rsiVal.toFixed(1) : '—';
+      rsiEl.style.color = rsiVal > 70 ? 'var(--red)' : rsiVal < 30 ? 'var(--green)' : 'var(--text1)';
+    }).catch(() => {});
+
+  // Fetch news
+  const toDate = new Date().toISOString().slice(0,10);
+  const frDate = new Date(Date.now() - 30*24*3600*1000).toISOString().slice(0,10);
+  fetch(`https://finnhub.io/api/v1/company-news?symbol=${symbol}&from=${frDate}&to=${toDate}&token=${Keys.finnhub}`)
+    .then(r => r.json())
+    .then(news => {
+      const items = (news || []).slice(0, 5);
+      if (!items.length) { document.getElementById('modal-news').innerHTML = '<div style="color:var(--text3);font-size:12px">No recent news.</div>'; return; }
+      document.getElementById('modal-news').innerHTML = items.map(n => `
+        <a class="news-item" href="${n.url||'#'}" target="_blank" rel="noopener noreferrer">
+          <div class="news-headline" style="font-size:12px">${n.headline}</div>
+          <div class="news-meta"><span style="color:var(--text3)">${n.source}</span><span>·</span><span style="color:var(--text3)">${Math.round((Date.now()/1000-n.datetime)/3600)}h ago</span></div>
+        </a>`).join('');
+    }).catch(() => { document.getElementById('modal-news').innerHTML = '<div style="color:var(--text3);font-size:12px">News unavailable.</div>'; });
+}
+
+function closeStockModal() {
+  document.getElementById('stock-modal').classList.remove('open');
+}
+
+function drawStockChart(closes, symbol) {
+  const canvas = document.getElementById('stock-chart-canvas');
+  if (!canvas) return;
+  const W = 340, H = 120;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+  const min = Math.min(...closes), max = Math.max(...closes);
+  const range = max - min || 1;
+  const color = closes[closes.length-1] >= closes[0] ? '#00FF87' : '#FF3B5C';
+  const pad = 10;
+  const pts = closes.map((v, i) => [pad + (i/(closes.length-1))*(W-2*pad), H - pad - ((v-min)/range)*(H-2*pad)]);
+  // Gradient fill
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0, color + '44');
+  grad.addColorStop(1, color + '00');
+  ctx.beginPath();
+  pts.forEach(([x,y], i) => i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y));
+  ctx.lineTo(pts[pts.length-1][0], H);
+  ctx.lineTo(pts[0][0], H);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+  // Line
+  ctx.beginPath();
+  pts.forEach(([x,y], i) => i === 0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y));
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
+}
+
+function calcRSI(closes, period) {
+  if (closes.length < period + 1) return null;
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i-1];
+    if (diff > 0) gains += diff; else losses += Math.abs(diff);
+  }
+  let avgGain = gains / period, avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i-1];
+    avgGain = (avgGain * (period-1) + Math.max(0,diff)) / period;
+    avgLoss = (avgLoss * (period-1) + Math.max(0,-diff)) / period;
+  }
+  if (avgLoss === 0) return 100;
+  return 100 - (100 / (1 + avgGain / avgLoss));
+}
+
+/* ====================================================
+   FEATURE 4: CSV IMPORT FOR HOLDINGS
+   ==================================================== */
+function triggerCSVImport() {
+  document.getElementById('csv-import-input').click();
+}
+
+function handleCSVImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const lines = e.target.result.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length < 2) { showToast('CSV is empty or missing data'); return; }
+    let imported = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(',').map(c => c.trim());
+      const symbol = (cols[0] || '').toUpperCase();
+      const shares = parseFloat(cols[1]);
+      const avgCost = parseFloat(cols[2]);
+      if (!symbol || isNaN(shares) || isNaN(avgCost) || shares <= 0 || avgCost <= 0) continue;
+      State.holdings.push({id:'h'+Date.now()+i, symbol, shares, avgCost});
+      imported++;
+    }
+    if (imported > 0) {
+      ls.setItem('da_holdings', JSON.stringify(State.holdings));
+      showToast('✓ Imported '+imported+' holding'+(imported>1?'s':''));
+      initPortfolio();
+    } else {
+      showToast('No valid rows found in CSV');
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+/* ====================================================
+   FEATURE 5: GAIN/LOSS CHART (drawn in renderPortfolio)
+   ==================================================== */
+function drawPortfolioBarChart(enriched) {
+  const canvas = document.getElementById('portfolio-chart');
+  if (!canvas || !enriched.length) { canvas && (canvas.style.display='none'); return; }
+  canvas.style.display = 'block';
+  const W = canvas.offsetWidth || 340;
+  canvas.width = W;
+  canvas.height = 120;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, 120);
+  const pcts = enriched.map(h => h.cost > 0 ? ((h.value - h.cost) / h.cost * 100) : 0);
+  const maxAbs = Math.max(...pcts.map(Math.abs), 1);
+  const barW = Math.min(36, (W - 20) / enriched.length - 6);
+  const midY = 70;
+  const maxH = 50;
+  enriched.forEach((h, i) => {
+    const pct = pcts[i];
+    const barH = Math.max(2, (Math.abs(pct) / maxAbs) * maxH);
+    const x = 10 + i * ((W - 20) / enriched.length) + ((W - 20) / enriched.length - barW) / 2;
+    const color = pct >= 0 ? '#00FF87' : '#FF3B5C';
+    ctx.fillStyle = color + '99';
+    const y = pct >= 0 ? midY - barH : midY;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x, y, barW, barH, 3) : ctx.rect(x, y, barW, barH);
+    ctx.fill();
+    // Label
+    ctx.fillStyle = 'rgba(138,138,158,0.9)';
+    ctx.font = '9px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(h.symbol.slice(0,4), x + barW/2, 110);
+    // Pct label
+    ctx.fillStyle = color;
+    ctx.font = 'bold 9px -apple-system,sans-serif';
+    const labelY = pct >= 0 ? midY - barH - 4 : midY + barH + 11;
+    ctx.fillText((pct >= 0 ? '+' : '') + pct.toFixed(1) + '%', x + barW/2, labelY);
+  });
+  // Mid line
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+}
+
+/* ====================================================
+   FEATURE 6: TAX EFFICIENCY SCORE
+   ==================================================== */
+function renderTaxEfficiency(enriched, totalVal) {
+  const card = document.getElementById('tax-efficiency-card');
+  if (!card || !enriched.length) return;
+  // Weight positions by value, score higher if at gain (proxy for long-term)
+  let weightedScore = 0, totalWeight = 0;
+  let gainPositions = 0;
+  enriched.forEach(h => {
+    const pct = h.cost > 0 ? ((h.value - h.cost) / h.cost * 100) : 0;
+    const w = totalVal > 0 ? h.value / totalVal : 1 / enriched.length;
+    totalWeight += w;
+    if (pct > 0) { weightedScore += w; gainPositions++; }
+  });
+  const score = Math.round((weightedScore / (totalWeight || 1)) * 100);
+  const gainPct = enriched.length > 0 ? Math.round((gainPositions / enriched.length) * 100) : 0;
+  const col = score >= 65 ? 'var(--green)' : score >= 40 ? 'var(--gold)' : 'var(--red)';
+  card.style.display = 'block';
+  card.innerHTML = `<div style="background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:13px 15px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="color:var(--text1);font-size:13px;font-weight:700">🧾 Tax Efficiency Score</div>
+      <div style="color:${col};font-size:18px;font-weight:800">${score}<span style="font-size:11px;color:var(--text3)">/100</span></div>
+    </div>
+    <div style="color:var(--text3);font-size:11px;line-height:1.5">${gainPct}% of your positions are at a gain — suited for long-term capital gains treatment if held &gt;1 year.</div>
+  </div>`;
+}
+
+/* ====================================================
+   FEATURE 7: MULTIPLE AI PICK SESSIONS PER DAY
+   ==================================================== */
+function getAIPicksCacheKey() {
+  const today = new Date().toISOString().slice(0,10);
+  const session = new Date().getHours() < 12 ? 'am' : 'pm';
+  return `da_ai_picks_${today}_${session}`;
+}
+
+/* ====================================================
+   FEATURE 8: OFFLINE MODE / CACHE
+   ==================================================== */
+const QUOTE_CACHE_KEY = 'da_quote_cache';
+
+function saveQuoteCache(quotes) {
+  try { ls.setItem(QUOTE_CACHE_KEY, JSON.stringify({ts: Date.now(), data: quotes})); } catch(e) {}
+}
+
+function loadQuoteCache() {
+  try {
+    const raw = ls.getItem(QUOTE_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch(e) { return null; }
+}
+
+/* ====================================================
+   FEATURE 11: STOCK COMPARISON MODAL
+   ==================================================== */
+function openCompareModal() {
+  document.getElementById('compare-modal').classList.add('open');
+}
+
+function closeCompareModal() {
+  document.getElementById('compare-modal').classList.remove('open');
+  document.getElementById('compare-results').innerHTML = '';
+}
+
+async function runCompare() {
+  const s1 = document.getElementById('compare-sym1').value.trim().toUpperCase();
+  const s2 = document.getElementById('compare-sym2').value.trim().toUpperCase();
+  if (!s1 || !s2) { showToast('Enter two symbols to compare'); return; }
+  const res = document.getElementById('compare-results');
+  res.innerHTML = '<div style="color:var(--text3);font-size:12px;text-align:center;padding:10px">Loading…</div>';
+  if (!Keys.finnhub) { res.innerHTML = '<div style="color:var(--text3);font-size:12px">Add Finnhub key for live data.</div>'; return; }
+  try {
+    const [q1, q2] = await Promise.all([fetchQuote(s1).catch(()=>null), fetchQuote(s2).catch(()=>null)]);
+    const info1 = SYMBOL_INFO[s1] || {name:s1, sector:'—'};
+    const info2 = SYMBOL_INFO[s2] || {name:s2, sector:'—'};
+    // 30d change via candles
+    const nowTs = Math.floor(Date.now()/1000), fromTs = nowTs - 31*24*3600;
+    const [c1, c2] = await Promise.all([
+      fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${s1}&resolution=D&from=${fromTs}&to=${nowTs}&token=${Keys.finnhub}`).then(r=>r.json()).catch(()=>null),
+      fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${s2}&resolution=D&from=${fromTs}&to=${nowTs}&token=${Keys.finnhub}`).then(r=>r.json()).catch(()=>null)
+    ]);
+    const ch1 = c1 && c1.c && c1.c.length > 1 ? ((c1.c[c1.c.length-1]-c1.c[0])/c1.c[0]*100) : null;
+    const ch2 = c2 && c2.c && c2.c.length > 1 ? ((c2.c[c2.c.length-1]-c2.c[0])/c2.c[0]*100) : null;
+    const fmtPct = v => v !== null ? (v >= 0 ? '+' : '') + v.toFixed(2) + '%' : '—';
+    const colPct = v => v === null ? 'var(--text3)' : v >= 0 ? 'var(--green)' : 'var(--red)';
+    res.innerHTML = `<div style="display:flex;gap:10px">
+      ${[{s:s1,q:q1,info:info1,ch:ch1},{s:s2,q:q2,info:info2,ch:ch2}].map(({s,q,info,ch}) => `
+      <div style="flex:1;background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:12px">
+        <div style="color:var(--text1);font-size:16px;font-weight:800">${s}</div>
+        <div style="color:var(--text3);font-size:10px;margin-bottom:8px">${info.name.split(' ').slice(0,3).join(' ')}</div>
+        <div style="color:var(--text1);font-size:18px;font-weight:700">${q ? '$'+q.c.toFixed(2) : '—'}</div>
+        <div style="color:${q?(q.dp??0)>=0?'var(--green)':'var(--red)':'var(--text3)'};font-size:12px;font-weight:600">${q ? (q.dp??0)>=0?'+':'':''  }${q ? (q.dp??0).toFixed(2)+'% today' : '—'}</div>
+        <div style="margin-top:8px;font-size:11px;color:var(--text2)">30d: <span style="color:${colPct(ch)};font-weight:700">${fmtPct(ch)}</span></div>
+        <div style="font-size:11px;color:var(--text2);margin-top:3px">Sector: ${info.sector}</div>
+      </div>`).join('')}
+    </div>`;
+  } catch(e) {
+    res.innerHTML = '<div style="color:var(--red);font-size:12px">Error: '+e.message+'</div>';
+  }
+}
+
+/* ====================================================
+   FEATURE 10: WATCHLIST PRICE ALERTS
+   ==================================================== */
+function saveWatchPrice(symbol, price) {
+  if (price) ls.setItem('da_watch_price_' + symbol, String(price));
+}
+
+async function checkWatchlistAlerts() {
+  if (!Keys.finnhub || !State.watchlist.length) return;
+  for (const sym of State.watchlist) {
+    const savedPrice = parseFloat(ls.getItem('da_watch_price_' + sym));
+    if (!savedPrice) continue;
+    try {
+      const q = await fetchQuote(sym);
+      if (!q || !q.c) continue;
+      const movePct = ((q.c - savedPrice) / savedPrice) * 100;
+      if (Math.abs(movePct) >= 5) {
+        const sign = movePct >= 0 ? '+' : '';
+        showToast(`⚡ ${sym} moved ${sign}${movePct.toFixed(1)}% since you added it`);
+        await sleep(2800);
+      }
+    } catch(e) {}
+  }
+}
+
+/* ====================================================
    INIT
    ==================================================== */
 // Patch ob-6 finish button
@@ -2075,6 +2496,9 @@ updateClock();
     if(btn) btn.onclick = launchApp;
   }
 })();
+
+// Apply theme early
+applyTheme();
 
 // Auto-login if onboarding done
 if (ls.getItem('da_ob_done')) {
