@@ -1266,6 +1266,7 @@ Confidence 55-96. Tickers must come from the Finnhub top 50 list above. picks ar
       if (q && q.data && q.data.c) pickPrices[p.symbol] = q.data.c;
     });
     ls.setItem('da_pick_prices_'+cacheKey, JSON.stringify(pickPrices));
+    logPicksToHistory(picks, pickPrices);
     for(let i=ls.length-1;i>=0;i--){const k=ls.key(i);if(k&&k.startsWith('da_ai_picks_')&&k!==cacheKey)ls.removeItem(k);}
     return picks;
   } catch(e) { return null; }
@@ -1669,47 +1670,126 @@ function renderHomeRecs() {
   }
 
   // Feature 1: Render yesterday's performance
-  renderYesterdayPerformance();
+  renderTrackRecord();
 }
 
-function renderYesterdayPerformance() {
+/* ====================================================
+   PICK PERFORMANCE TRACKING
+   ==================================================== */
+function getPickHistory() {
+  try { return JSON.parse(ls.getItem('da_pick_history')||'[]'); } catch(e) { return []; }
+}
+function savePickHistory(h) { ls.setItem('da_pick_history', JSON.stringify(h.slice(-60))); } // keep last 60 entries
+
+// Called after quotes load — record outcome of any pending picks
+function settlePicks() {
+  const history = getPickHistory();
+  let changed = false;
+  history.forEach(entry => {
+    if (entry.settled) return;
+    const q = State.quotes[entry.symbol];
+    if (!q || !q.c) return;
+    entry.exitPrice = q.c;
+    entry.returnPct = ((q.c - entry.entryPrice) / entry.entryPrice * 100);
+    entry.settled = true;
+    changed = true;
+  });
+  if (changed) savePickHistory(history);
+}
+
+// Called when new picks are saved — log them as pending
+function logPicksToHistory(picks, prices) {
+  const history = getPickHistory();
+  const now = Date.now();
+  const today = new Date().toISOString().slice(0,10);
+  const sess = new Date().getHours() < 12 ? 'AM' : 'PM';
+  picks.forEach(pick => {
+    const entryPrice = prices[pick.symbol];
+    if (!entryPrice) return;
+    // Don't duplicate same pick from same session
+    const exists = history.find(h => h.symbol === pick.symbol && h.date === today && h.session === sess);
+    if (exists) return;
+    history.push({
+      symbol: pick.symbol, name: pick.name, sector: pick.sector||'',
+      entryPrice, date: today, session: sess, pickedAt: now,
+      holdPeriod: pick.holdPeriod||'', rationale: pick.rationale||'',
+      settled: false, exitPrice: null, returnPct: null
+    });
+  });
+  savePickHistory(history);
+}
+
+function renderTrackRecord() {
   const el = document.getElementById('perf-section');
   if (!el) return;
-  const prevKey = getPrevAIPicksCacheKey();
-  if (!prevKey) { el.innerHTML = ''; return; }
-  const prevCached = ls.getItem(prevKey);
-  if (!prevCached) { el.innerHTML = ''; return; }
-  let prevPicks = [];
-  try { const p = JSON.parse(prevCached); prevPicks = Array.isArray(p) ? p : (p.picks||[]); } catch(e) { return; }
-  if (!prevPicks.length) { el.innerHTML = ''; return; }
-  const prevPrices = {};
-  try { const pp = ls.getItem('da_pick_prices_'+prevKey); if (pp) Object.assign(prevPrices, JSON.parse(pp)); } catch(e) {}
-  const rows = prevPicks.map(pick => {
-    const sym = pick.symbol;
-    const entryPrice = prevPrices[sym];
-    const q = State.quotes[sym];
-    const currentPrice = q ? q.c : null;
-    if (!entryPrice || !currentPrice) return '';
-    const pct = ((currentPrice - entryPrice) / entryPrice * 100);
-    const isUp = pct >= 0;
-    const color = isUp ? 'var(--green)' : 'var(--red)';
+  settlePicks();
+  const history = getPickHistory().filter(h => h.settled && h.returnPct !== null);
+  if (!history.length) { el.innerHTML = ''; return; }
+
+  // Stats
+  const wins = history.filter(h => h.returnPct >= 0);
+  const winRate = Math.round(wins.length / history.length * 100);
+  const avgReturn = history.reduce((s,h) => s + h.returnPct, 0) / history.length;
+  const best = history.reduce((b,h) => h.returnPct > b.returnPct ? h : b, history[0]);
+  const streak = (() => {
+    let s = 0;
+    for (let i = history.length-1; i >= 0; i--) {
+      if (history[i].returnPct >= 0) s++; else break;
+    }
+    return s;
+  })();
+
+  // Stat color
+  const wrColor = winRate >= 70 ? 'var(--green)' : winRate >= 50 ? 'var(--gold)' : 'var(--red)';
+  const arColor = avgReturn >= 0 ? 'var(--green)' : 'var(--red)';
+
+  // History rows (most recent first)
+  const rows = [...history].reverse().slice(0,10).map(h => {
+    const isUp = h.returnPct >= 0;
+    const col = isUp ? 'var(--green)' : 'var(--red)';
     const sign = isUp ? '+' : '';
-    const holdActive = pick.holdPeriod ? `<span style="color:var(--text3);font-size:10px"> · Hold: ${pick.holdPeriod}</span>` : '';
-    return `<div class="perf-card">
-      <div style="width:38px;height:38px;border-radius:11px;background:${isUp?'rgba(0,255,135,0.1)':'rgba(255,59,92,0.1)'};border:1px solid ${isUp?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--text1);flex-shrink:0">${sym.slice(0,4)}</div>
-      <div style="flex:1">
-        <div style="color:var(--text1);font-size:13px;font-weight:700">${sym}</div>
-        <div style="color:var(--text3);font-size:10px">Entry $${entryPrice.toFixed(2)} → Now $${currentPrice.toFixed(2)}${holdActive}</div>
+    const dateStr = new Date(h.pickedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)">
+      <div style="width:36px;height:36px;border-radius:10px;background:${isUp?'rgba(0,255,135,0.1)':'rgba(255,59,92,0.1)'};border:1px solid ${isUp?'rgba(0,255,135,0.2)':'rgba(255,59,92,0.2)'};display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;color:var(--text1);flex-shrink:0">${h.symbol.slice(0,4)}</div>
+      <div style="flex:1;min-width:0">
+        <div style="color:var(--text1);font-size:13px;font-weight:700">${h.symbol} <span style="color:var(--text3);font-size:10px;font-weight:400">${h.session} · ${dateStr}</span></div>
+        <div style="color:var(--text3);font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">$${h.entryPrice.toFixed(2)} → $${h.exitPrice.toFixed(2)}${h.holdPeriod?' · '+h.holdPeriod:''}</div>
       </div>
-      <div style="color:${color};font-size:12px;font-weight:700">${isUp?'📈':'📉'} ${sign}${pct.toFixed(2)}% since picked yesterday</div>
+      <div style="color:${col};font-size:13px;font-weight:800;flex-shrink:0">${isUp?'▲':'▼'} ${sign}${h.returnPct.toFixed(2)}%</div>
     </div>`;
-  }).filter(Boolean).join('');
-  if (!rows) { el.innerHTML = ''; return; }
-  el.innerHTML = `<div style="margin-top:6px">
-    <div onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--glass);border:1px solid var(--border);border-radius:12px;cursor:pointer;font-size:12px;color:var(--text2);font-weight:600;margin-bottom:0">
-      <span>📊 Yesterday's Performance</span><span>›</span>
+  }).join('');
+
+  el.innerHTML = `
+  <div style="margin:14px 0 6px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div class="section-title" style="margin:0">AI Track Record</div>
+      <span class="pill ${winRate>=60?'green':winRate>=45?'gold':'red'}">${history.length} picks tracked</span>
     </div>
-    <div style="display:none;margin-top:6px">${rows}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:12px 10px;text-align:center">
+        <div style="color:${wrColor};font-size:22px;font-weight:800;letter-spacing:-.5px">${winRate}%</div>
+        <div style="color:var(--text3);font-size:10px;font-weight:600;margin-top:2px">WIN RATE</div>
+      </div>
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:12px 10px;text-align:center">
+        <div style="color:${arColor};font-size:22px;font-weight:800;letter-spacing:-.5px">${avgReturn>=0?'+':''}${avgReturn.toFixed(1)}%</div>
+        <div style="color:var(--text3);font-size:10px;font-weight:600;margin-top:2px">AVG RETURN</div>
+      </div>
+      <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:12px 10px;text-align:center">
+        <div style="color:var(--gold);font-size:22px;font-weight:800;letter-spacing:-.5px">${streak}</div>
+        <div style="color:var(--text3);font-size:10px;font-weight:600;margin-top:2px">WIN STREAK</div>
+      </div>
+    </div>
+    ${best ? `<div style="background:rgba(0,212,255,0.06);border:1px solid rgba(0,212,255,0.15);border-radius:12px;padding:9px 12px;margin-bottom:10px;display:flex;align-items:center;gap:8px">
+      <span style="font-size:18px">🏆</span>
+      <div><div style="color:var(--text1);font-size:12px;font-weight:700">Best pick: ${best.symbol} <span style="color:var(--green)">+${best.returnPct.toFixed(2)}%</span></div>
+      <div style="color:var(--text3);font-size:10px">${best.rationale ? best.rationale.slice(0,60)+'…' : 'AI pick'}</div></div>
+    </div>` : ''}
+    <div onclick="const d=this.nextElementSibling;d.style.display=d.style.display==='none'?'block':'none';this.querySelector('.tr-arrow').textContent=d.style.display==='none'?'›':'‹'" style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:var(--glass);border:1px solid var(--border);border-radius:12px;cursor:pointer;font-size:12px;color:var(--text2);font-weight:600">
+      <span>📋 Full history</span><span class="tr-arrow">›</span>
+    </div>
+    <div style="display:none;margin-top:6px;background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:0 12px">
+      ${rows}
+    </div>
   </div>`;
 }
 
