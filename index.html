@@ -341,6 +341,15 @@ body.light .search-input{color:#0A0A18}
 /* Past performance section */
 #perf-section{margin-top:14px}
 .perf-card{background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:11px 13px;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+
+/* Sell modal / Trade Journal */
+#sell-modal{position:absolute;inset:0;z-index:300;background:rgba(0,0,0,0.65);backdrop-filter:blur(4px);display:none;align-items:flex-end}
+#sell-modal.open{display:flex}
+#sell-inner{background:#0D0D1F;border-radius:20px 20px 0 0;padding:22px 18px 32px;width:100%;border:1px solid rgba(255,255,255,0.1);animation:slideUpSheet .35s cubic-bezier(.4,0,.2,1)}
+.journal-card{background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:13px 14px;margin-bottom:8px}
+.journal-ai{background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.13);border-radius:10px;padding:10px 12px;margin-top:9px;color:var(--text2);font-size:12px;line-height:1.7;display:none}
+.journal-ai.open{display:block;animation:fadeIn .25s ease}
+.pattern-card{background:linear-gradient(135deg,rgba(191,90,242,0.1),rgba(0,85,255,0.05));border:1px solid rgba(191,90,242,0.2);border-radius:14px;padding:13px 15px;margin-bottom:12px}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 </head>
@@ -639,9 +648,24 @@ body.light .search-input{color:#0A0A18}
           </div>
         </div>
       </div>
+      <div id="journal-section" style="display:none;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <div class="section-title" style="margin:0">📔 Trade Journal</div>
+          <button id="pattern-btn" onclick="analyzePatterns()" style="background:var(--glass);border:1px solid var(--border);border-radius:9px;padding:5px 11px;color:var(--text2);font-size:11px;font-weight:600;cursor:pointer">🧠 My Patterns</button>
+        </div>
+        <div id="pattern-card" style="display:none" class="pattern-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div style="color:var(--purple);font-size:12px;font-weight:700">🧠 Behavioural Patterns</div>
+            <button onclick="document.getElementById('pattern-card').style.display='none'" style="background:none;border:none;color:var(--text3);font-size:16px;cursor:pointer">✕</button>
+          </div>
+          <div id="pattern-text" style="color:var(--text2);font-size:12px;line-height:1.7"></div>
+        </div>
+        <div id="journal-list"></div>
+        <button onclick="toggleOldJournal()" id="journal-more-btn" style="display:none;width:100%;background:none;border:1px solid var(--border);border-radius:10px;padding:9px;color:var(--text3);font-size:12px;cursor:pointer;margin-top:4px">Show older entries ↓</button>
+      </div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
         <div class="section-title" style="margin:0" id="holdings-title">Holdings (0)</div>
-        <span style="color:var(--text3);font-size:11px">Tap × to remove</span>
+        <span style="color:var(--text3);font-size:11px">Tap × to sell &amp; log</span>
       </div>
       <div id="holdings-list"></div>
     </div>
@@ -847,6 +871,22 @@ body.light .search-input{color:#0A0A18}
         </div>
         <div class="section-title" style="font-size:14px">Recent News</div>
         <div id="modal-news"><div style="color:var(--text3);font-size:12px">Loading news…</div></div>
+      </div>
+    </div>
+
+    <!-- SELL / TRADE JOURNAL MODAL -->
+    <div id="sell-modal">
+      <div id="sell-inner">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="color:var(--text1);font-size:17px;font-weight:800">📔 Log This Trade</div>
+          <button onclick="closeSellModal()" style="background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer">✕</button>
+        </div>
+        <div id="sell-summary" style="color:var(--text2);font-size:13px;margin-bottom:14px;line-height:1.5"></div>
+        <div style="color:var(--text2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Why are you selling?</div>
+        <textarea id="sell-reason" style="width:100%;background:rgba(255,255,255,0.05);border:1.5px solid var(--border);border-radius:12px;padding:11px 13px;color:var(--text1);font-size:13px;outline:none;resize:none;line-height:1.55;font-family:inherit;min-height:72px;transition:border-color .2s" placeholder="e.g. Hit my target, took profits early, company news, needed the cash…" onfocus="this.style.borderColor='rgba(0,212,255,0.4)'" onblur="this.style.borderColor='var(--border)'"></textarea>
+        <div style="color:var(--text3);font-size:11px;margin:5px 0 14px">Alpha will write a journal entry and learn your trading patterns.</div>
+        <button class="btn-primary" onclick="confirmSell()">Log Trade &amp; Remove →</button>
+        <button onclick="skipSellLog()" style="width:100%;margin-top:9px;padding:12px;border-radius:14px;border:1px solid var(--border);background:none;color:var(--text2);font-size:13px;font-weight:600;cursor:pointer">Remove without logging</button>
       </div>
     </div>
 
@@ -1565,7 +1605,7 @@ function getAccounts() {
 function saveAccounts(obj) { ls.setItem('da_accounts', JSON.stringify(obj)); }
 
 // Keys we persist per-account
-const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency','da_xp','da_streak','da_last_open','da_postmortems'];
+const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency','da_xp','da_streak','da_last_open','da_postmortems','da_trade_journal'];
 
 function saveCurrentProfile() {
   const email = ls.getItem('da_current_email');
@@ -2220,6 +2260,177 @@ async function loadPostMortem(pmKey, elId) {
   }
 }
 
+/* ====================================================
+   AI TRADE JOURNAL
+   ==================================================== */
+let _sellPendingId = null;
+
+function getTradeJournal() {
+  try { return JSON.parse(ls.getItem('da_trade_journal')||'[]'); } catch(e) { return []; }
+}
+function saveTradeJournal(arr) { ls.setItem('da_trade_journal', JSON.stringify(arr.slice(-100))); saveCurrentProfile(); }
+
+function promptSellReason(id) {
+  const h = State.holdings.find(x => x.id === id);
+  if (!h) return;
+  _sellPendingId = id;
+  const q = State.quotes[h.symbol];
+  const price = q ? q.c : h.avgCost;
+  const pnlPct = ((price - h.avgCost) / h.avgCost * 100).toFixed(1);
+  const pnlSign = pnlPct >= 0 ? '+' : '';
+  const pnlCol = pnlPct >= 0 ? 'var(--green)' : 'var(--red)';
+  document.getElementById('sell-summary').innerHTML = `
+    Selling <strong style="color:var(--text1)">${h.symbol}</strong> · ${h.shares} shares<br>
+    Avg cost ${fmtPrice(h.avgCost)} → Now <strong style="color:var(--text1)">${fmtPrice(price)}</strong>
+    <span style="color:${pnlCol};font-weight:700"> (${pnlSign}${pnlPct}%)</span>`;
+  document.getElementById('sell-reason').value = '';
+  document.getElementById('sell-modal').classList.add('open');
+}
+
+function closeSellModal() {
+  _sellPendingId = null;
+  document.getElementById('sell-modal').classList.remove('open');
+}
+
+function skipSellLog() {
+  const id = _sellPendingId;
+  _sellPendingId = null;
+  document.getElementById('sell-modal').classList.remove('open');
+  if (id) removeHolding(id, true);
+}
+
+async function confirmSell() {
+  const id = _sellPendingId;
+  _sellPendingId = null;
+  document.getElementById('sell-modal').classList.remove('open');
+  const reason = document.getElementById('sell-reason').value.trim();
+  const h = State.holdings.find(x => x.id === id);
+  if (!h) return;
+  const q = State.quotes[h.symbol];
+  const sellPrice = q ? q.c : h.avgCost;
+  const pnlPct = (sellPrice - h.avgCost) / h.avgCost * 100;
+
+  removeHolding(id, true); // remove without calling this flow again
+
+  const entry = {
+    id: 'j' + Date.now(),
+    symbol: h.symbol,
+    shares: h.shares,
+    avgCost: h.avgCost,
+    sellPrice,
+    pnlPct,
+    sellDate: new Date().toISOString().split('T')[0],
+    reason: reason || '(no reason given)',
+    aiEntry: null
+  };
+
+  const journal = getTradeJournal();
+  journal.push(entry);
+  saveTradeJournal(journal);
+  renderJournal();
+  showToast('📔 Trade logged' + (reason ? ' — AI writing entry…' : ''));
+
+  if ((Keys.groq || Keys.anthropic) && reason) {
+    const dir = pnlPct >= 0 ? `gained ${pnlPct.toFixed(1)}%` : `lost ${Math.abs(pnlPct).toFixed(1)}%`;
+    const prompt = `You are a candid personal trading coach reviewing a trade the user just closed.
+Symbol: ${entry.symbol}
+Avg cost: $${entry.avgCost.toFixed(2)} | Sell price: $${sellPrice.toFixed(2)} | Outcome: ${dir}
+User's reason for selling: "${reason}"
+
+Write exactly 3 short sentences as a journal entry (no bullet points, no headers):
+1. What the trade thesis likely was based on the reason given.
+2. What actually happened (outcome in plain terms).
+3. One honest lesson or pattern to watch for.
+Keep it direct and insightful, like a good trading coach.`;
+    try {
+      const text = await callClaude([{role:'user', content:prompt}]);
+      if (text) {
+        const j2 = getTradeJournal();
+        const idx = j2.findIndex(x => x.id === entry.id);
+        if (idx !== -1) { j2[idx].aiEntry = text; saveTradeJournal(j2); renderJournal(); }
+        awardXP('review_postmortem');
+      }
+    } catch(e) {}
+  }
+}
+
+function removeHolding(id, skipJournal) {
+  if (!skipJournal) { promptSellReason(id); return; }
+  State.holdings = State.holdings.filter(h => h.id !== id);
+  ls.setItem('da_holdings', JSON.stringify(State.holdings));
+  saveCurrentProfile();
+  renderPortfolio();
+  showToast('Holding removed');
+}
+
+let _journalShowAll = false;
+function toggleOldJournal() { _journalShowAll = true; renderJournal(); }
+
+function renderJournal() {
+  const section = document.getElementById('journal-section');
+  const list = document.getElementById('journal-list');
+  const moreBtn = document.getElementById('journal-more-btn');
+  if (!section || !list) return;
+  const journal = getTradeJournal().reverse(); // newest first
+  if (!journal.length) { section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  const show = _journalShowAll ? journal : journal.slice(0, 5);
+  list.innerHTML = show.map(e => {
+    const pnlCol = e.pnlPct >= 0 ? 'var(--green)' : 'var(--red)';
+    const sign = e.pnlPct >= 0 ? '+' : '';
+    const aiId = 'jai-' + e.id;
+    return `<div class="journal-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div style="width:34px;height:34px;border-radius:10px;background:var(--glass2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:var(--text1)">${e.symbol}</div>
+          <div>
+            <div style="color:var(--text1);font-size:13px;font-weight:700">${e.symbol}</div>
+            <div style="color:var(--text3);font-size:10px">${e.sellDate}</div>
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="color:${pnlCol};font-size:13px;font-weight:800">${sign}${e.pnlPct.toFixed(1)}%</div>
+          <div style="color:var(--text3);font-size:10px">${fmtPrice(e.avgCost)} → ${fmtPrice(e.sellPrice)}</div>
+        </div>
+      </div>
+      <div style="color:var(--text2);font-size:12px;margin-top:5px;font-style:italic">"${e.reason}"</div>
+      ${e.aiEntry
+        ? `<button onclick="document.getElementById('${aiId}').classList.toggle('open')" style="background:rgba(0,212,255,0.07);border:1px solid rgba(0,212,255,0.15);border-radius:7px;padding:4px 10px;color:var(--blue);font-size:11px;font-weight:600;cursor:pointer;margin-top:7px">🧠 Alpha's Take</button>
+           <div class="journal-ai" id="${aiId}">${e.aiEntry}</div>`
+        : `<div style="color:var(--text3);font-size:11px;margin-top:6px">AI entry generating…</div>`}
+    </div>`;
+  }).join('');
+  if (moreBtn) moreBtn.style.display = (!_journalShowAll && journal.length > 5) ? 'block' : 'none';
+}
+
+async function analyzePatterns() {
+  const journal = getTradeJournal();
+  if (journal.length < 3) { showToast('Log at least 3 trades to see patterns'); return; }
+  if (!Keys.groq && !Keys.anthropic) { showToast('Add a Groq key in Settings (free!)'); return; }
+  const card = document.getElementById('pattern-card');
+  const text = document.getElementById('pattern-text');
+  card.style.display = 'block';
+  text.innerHTML = '<span style="color:var(--blue)">Analysing your trading patterns…</span>';
+  document.getElementById('pattern-btn').disabled = true;
+  const summary = journal.slice(-20).map(e =>
+    `${e.symbol}: ${e.pnlPct >= 0 ? '+' : ''}${e.pnlPct.toFixed(1)}% on ${e.sellDate}. Reason: "${e.reason}"`
+  ).join('\n');
+  const prompt = `You are a behavioural finance coach. Analyse these recent trades and identify honest patterns in this trader's behaviour. Look for: timing mistakes, emotional decisions, sector biases, profit-taking habits, loss tolerance.
+
+Trades:
+${summary}
+
+Write 3–4 short, specific observations (not generic). Be direct and actionable. Format as plain text paragraphs, no bullet points or headers.`;
+  try {
+    const result = await callClaude([{role:'user', content:prompt}]);
+    text.innerHTML = result || 'No patterns identified yet.';
+    awardXP('review_postmortem');
+  } catch(e) {
+    text.innerHTML = '<span style="color:var(--red)">Error — check your API key.</span>';
+  }
+  document.getElementById('pattern-btn').disabled = false;
+}
+
 function renderTrackRecord() {
   const el = document.getElementById('perf-section');
   if (!el) return;
@@ -2578,6 +2789,7 @@ function addToWatchlist(symbol, e) {
 function initPortfolio() {
   const missing = Keys.finnhub ? [] : ['finnhub'];
   setupBanner('portfolio-setup-banner', missing);
+  renderJournal();
   if (Keys.finnhub && State.holdings.length) {
     fetchQuotes(State.holdings.map(h=>h.symbol)).then(qs=>{ Object.assign(State.quotes,qs); renderPortfolio(); }).catch(()=>renderPortfolio());
   } else {
@@ -2642,7 +2854,7 @@ function renderPortfolio() {
             <div style="color:var(--text1);font-size:14px;font-weight:700">${Keys.finnhub&&h.value?fmtPrice(h.value):fmtPrice(h.cost)}</div>
             ${Keys.finnhub&&h.value?`<div style="color:${pos?'var(--green)':'var(--red)'};font-size:12px;font-weight:600">${pos?'+':''}${fmtPrice(Math.abs(pnl2))} (${pos?'+':''}${pct2.toFixed(1)}%)</div>`:''}
           </div>
-          <button onclick="removeHolding('${h.id}')" style="background:rgba(255,59,92,0.1);border:1px solid rgba(255,59,92,0.2);border-radius:8px;width:28px;height:28px;color:var(--red);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">✕</button>
+          <button onclick="promptSellReason('${h.id}')" style="background:rgba(255,59,92,0.1);border:1px solid rgba(255,59,92,0.2);border-radius:8px;width:28px;height:28px;color:var(--red);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0">✕</button>
         </div>
       </div>
       <div style="display:flex;gap:8px">
@@ -2673,14 +2885,6 @@ function addHolding() {
   document.getElementById('add-form').classList.remove('open');
   showToast('✓ '+symbol+' added to portfolio');
   initPortfolio();
-}
-
-function removeHolding(id) {
-  State.holdings = State.holdings.filter(h=>h.id!==id);
-  ls.setItem('da_holdings', JSON.stringify(State.holdings));
-  saveCurrentProfile();
-  renderPortfolio();
-  showToast('Holding removed');
 }
 
 function fetchHealthInsight() {
