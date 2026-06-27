@@ -928,32 +928,33 @@ body.light .search-input{color:#0A0A18}
       <div style="color:var(--text1);font-size:17px;font-weight:800">Alpha Voice</div>
       <div id="voice-status" style="color:var(--blue);font-size:11px;font-weight:600;margin-top:1px">Ready</div>
     </div>
-    <button onclick="closeVoiceOverlay()" style="background:var(--glass);border:1px solid var(--border);border-radius:10px;width:34px;height:34px;color:var(--text2);font-size:16px;cursor:pointer">✕</button>
+    <button onclick="closeVoiceOverlay()" style="background:var(--glass);border:1px solid var(--border);border-radius:10px;width:34px;height:34px;color:var(--text2);font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
   </div>
   <!-- Conversation feed -->
-  <div id="voice-feed" style="flex:1;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:10px"></div>
+  <div id="voice-feed" style="flex:1;overflow-y:auto;padding:16px 16px 8px;display:flex;flex-direction:column;gap:10px">
+    <div style="text-align:center;color:var(--text3);font-size:12px;margin-top:20px">Type your question below, or tap 🎤 if your device supports voice input.</div>
+  </div>
   <!-- Wave animation (while speaking) -->
-  <div id="voice-wave" style="display:none;align-items:flex-end;justify-content:center;gap:4px;height:32px;padding:0 20px;margin-bottom:4px">
-    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0s;height:16px"></div>
+  <div id="voice-wave" style="display:none;align-items:flex-end;justify-content:center;gap:4px;height:28px;padding:0 20px;margin-bottom:2px">
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;height:16px"></div>
     <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.1s;height:26px"></div>
-    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.2s;height:32px"></div>
-    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.15s;height:22px"></div>
-    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.25s;height:18px"></div>
-    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.05s;height:28px"></div>
-    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.3s;height:20px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--blue);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.2s;height:24px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.15s;height:18px"></div>
+    <div style="width:4px;border-radius:2px;background:var(--purple);animation:voiceWave 0.8s ease-in-out infinite;animation-delay:0.05s;height:22px"></div>
+  </div>
+  <!-- Text input row (always visible) -->
+  <div style="padding:8px 14px 6px;display:flex;gap:8px;align-items:flex-end">
+    <textarea id="voice-text-input" rows="1" placeholder="Type your question…" style="flex:1;background:rgba(255,255,255,0.06);border:1.5px solid var(--border);border-radius:14px;padding:9px 12px;color:var(--text1);font-size:13px;outline:none;resize:none;line-height:1.5;max-height:72px;overflow-y:auto;font-family:inherit;transition:border-color .2s" onfocus="this.style.borderColor='rgba(0,212,255,0.4)'" onblur="this.style.borderColor='var(--border)'" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();voiceSubmitText()}"></textarea>
+    <button id="voice-mic-btn" onclick="voiceListen()" style="width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none;font-size:18px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;position:relative;transition:all .2s">
+      🎤
+      <div id="voice-listen-ring" style="display:none;position:absolute;inset:-5px;border-radius:18px;border:2px solid var(--blue);animation:voiceRing 1s ease-out infinite"></div>
+    </button>
+    <button onclick="voiceSubmitText()" style="width:42px;height:42px;border-radius:13px;background:linear-gradient(135deg,#00D4FF,#0055FF);border:none;font-size:18px;color:#000;font-weight:800;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center">↑</button>
   </div>
   <!-- Bottom controls -->
-  <div style="padding:12px 20px 28px;display:flex;flex-direction:column;align-items:center;gap:10px">
-    <!-- Mic button -->
-    <button id="voice-mic-btn" onclick="voiceListen()" style="width:68px;height:68px;border-radius:34px;background:linear-gradient(135deg,var(--blue),var(--purple));border:none;font-size:26px;cursor:pointer;display:flex;align-items:center;justify-content:center;box-shadow:0 0 30px rgba(0,212,255,0.3);transition:all .2s;position:relative">
-      🎤
-      <div id="voice-listen-ring" style="display:none;position:absolute;inset:-6px;border-radius:40px;border:2px solid var(--blue);animation:voiceRing 1s ease-out infinite"></div>
-    </button>
-    <div id="voice-hint" style="color:var(--text3);font-size:11px;text-align:center">Tap mic to speak · or tap below for daily briefing</div>
-    <div style="display:flex;gap:8px;width:100%">
-      <button onclick="startVoiceBriefing()" style="flex:1;padding:11px;border-radius:12px;background:var(--glass);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer">📊 Daily Briefing</button>
-      <button onclick="stopAllVoice()" style="padding:11px 16px;border-radius:12px;background:rgba(255,59,92,0.1);border:1px solid rgba(255,59,92,0.2);color:var(--red);font-size:12px;font-weight:600;cursor:pointer">⏹ Stop</button>
-    </div>
+  <div style="padding:6px 14px 24px;display:flex;gap:8px">
+    <button onclick="startVoiceBriefing()" style="flex:1;padding:10px;border-radius:12px;background:var(--glass);border:1px solid var(--border);color:var(--text2);font-size:12px;font-weight:600;cursor:pointer">📊 Daily Briefing</button>
+    <button onclick="stopAllVoice()" style="padding:10px 16px;border-radius:12px;background:rgba(255,59,92,0.1);border:1px solid rgba(255,59,92,0.2);color:var(--red);font-size:12px;font-weight:600;cursor:pointer">⏹ Stop</button>
   </div>
 </div>
 </div><!-- end flex wrapper -->
@@ -3777,15 +3778,28 @@ function closeVoiceOverlay() {
   document.getElementById('voice-rings').style.display = 'none';
 }
 
+function voiceSubmitText() {
+  const inp = document.getElementById('voice-text-input');
+  const q = (inp.value || '').trim();
+  if (!q) return;
+  inp.value = '';
+  inp.style.height = '';
+  voiceAsk(q);
+}
+
 function stopAllVoice() {
-  if (_voiceRecognition) { try { _voiceRecognition.stop(); } catch(e){} _voiceRecognition = null; }
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
+  if (_voiceRecognition) { try { _voiceRecognition.abort(); _voiceRecognition.stop(); } catch(e){} _voiceRecognition = null; }
+  try { if (window.speechSynthesis) { window.speechSynthesis.cancel(); } } catch(e){}
   _voiceSpeaking = false;
   _voiceListening = false;
-  document.getElementById('voice-wave').style.display = 'none';
-  document.getElementById('voice-listen-ring').style.display = 'none';
-  document.getElementById('voice-rings').style.display = 'none';
-  document.getElementById('voice-mic-btn').style.background = 'linear-gradient(135deg,var(--blue),var(--purple))';
+  const wave = document.getElementById('voice-wave');
+  const ring = document.getElementById('voice-listen-ring');
+  const rings = document.getElementById('voice-rings');
+  const mic = document.getElementById('voice-mic-btn');
+  if (wave) wave.style.display = 'none';
+  if (ring) ring.style.display = 'none';
+  if (rings) rings.style.display = 'none';
+  if (mic) mic.style.background = 'linear-gradient(135deg,var(--blue),var(--purple))';
   setVoiceStatus('Ready', 'var(--text2)');
 }
 
@@ -3817,9 +3831,9 @@ function voiceListen() {
   if (_voiceListening) { stopAllVoice(); return; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) {
-    // Fallback: type your question
-    const q = prompt('Ask Alpha a question:');
-    if (q && q.trim()) voiceAsk(q.trim());
+    // WKWebView / unsupported — focus text input instead
+    const inp = document.getElementById('voice-text-input');
+    if (inp) { inp.focus(); setVoiceStatus('Type your question below ↓', 'var(--gold)'); }
     return;
   }
   _voiceListening = true;
@@ -3876,32 +3890,38 @@ async function voiceAsk(question) {
 
 function speakText(text, onDone) {
   if (!window.speechSynthesis) { if (onDone) onDone(); return; }
-  window.speechSynthesis.cancel();
+  try { window.speechSynthesis.cancel(); } catch(e){}
   const utter = new SpeechSynthesisUtterance(text);
   _voiceSpeaking = true;
   setVoiceStatus('Speaking…', 'var(--green)');
-  document.getElementById('voice-wave').style.display = 'flex';
-  document.getElementById('voice-rings').style.display = 'block';
-  // Best voice
+  const wave = document.getElementById('voice-wave');
+  const rings = document.getElementById('voice-rings');
+  if (wave) wave.style.display = 'flex';
+  if (rings) rings.style.display = 'block';
+  // Pick best available voice
   const voices = window.speechSynthesis.getVoices();
   const preferred = voices.find(v=>/samantha|karen|moira|daniel|google.*en/i.test(v.name)&&/en/i.test(v.lang))
-    || voices.find(v=>/en[-_](GB|AU|US)/i.test(v.lang)&&!v.name.includes('('))
+    || voices.find(v=>/en[-_](GB|AU|US)/i.test(v.lang))
     || voices.find(v=>/en/i.test(v.lang)) || voices[0];
   if (preferred) utter.voice = preferred;
   utter.rate = 0.95; utter.pitch = 1.0; utter.volume = 1.0;
-  utter.onend = () => {
+  // Estimate duration as fallback for WKWebView where onend may not fire
+  const estMs = Math.max(3000, text.split(' ').length * 420);
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
     _voiceSpeaking = false;
-    document.getElementById('voice-wave').style.display = 'none';
-    document.getElementById('voice-rings').style.display = 'none';
+    if (wave) wave.style.display = 'none';
+    if (rings) rings.style.display = 'none';
+    setVoiceStatus('Ready', 'var(--text2)');
     if (onDone) onDone();
   };
-  utter.onerror = () => {
-    _voiceSpeaking = false;
-    document.getElementById('voice-wave').style.display = 'none';
-    document.getElementById('voice-rings').style.display = 'none';
-  };
-  const doSpeak = () => window.speechSynthesis.speak(utter);
-  window.speechSynthesis.getVoices().length === 0
+  utter.onend = finish;
+  utter.onerror = finish;
+  setTimeout(finish, estMs + 1000); // fallback in case onend never fires
+  const doSpeak = () => { try { window.speechSynthesis.speak(utter); } catch(e){ finish(); } };
+  voices.length === 0
     ? window.speechSynthesis.addEventListener('voiceschanged', doSpeak, {once:true})
     : doSpeak();
 }
