@@ -501,9 +501,21 @@ body.light .search-input{color:#0A0A18}
         </div>
       </div>
       <div class="portfolio-hero" id="home-portfolio-card">
-        <div style="color:var(--text2);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Portfolio Value</div>
-        <div class="portfolio-value" id="home-portfolio-val">—</div>
-        <div id="home-portfolio-change"></div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start">
+          <div>
+            <div style="color:var(--text2);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px">Portfolio Value</div>
+            <div class="portfolio-value" id="home-portfolio-val">—</div>
+            <div id="home-portfolio-change"></div>
+          </div>
+          <div id="alpha-score-badge" onclick="explainAlphaScore()" style="display:none;text-align:center;cursor:pointer;flex-shrink:0;padding:4px 2px">
+            <div style="position:relative;width:52px;height:52px;margin:0 auto">
+              <svg width="52" height="52"><circle cx="26" cy="26" r="22" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="4"/><circle id="alpha-score-ring" cx="26" cy="26" r="22" fill="none" stroke="var(--blue)" stroke-width="4" stroke-dasharray="138.2" stroke-dashoffset="138.2" stroke-linecap="round" transform="rotate(-90 26 26)" style="transition:stroke-dashoffset 1s cubic-bezier(.4,0,.2,1)"/></svg>
+              <div id="alpha-score-num" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:800;color:var(--text1)">—</div>
+            </div>
+            <div style="color:var(--text3);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin-top:2px">Alpha Score</div>
+          </div>
+        </div>
+        <div id="alpha-score-explain" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid rgba(0,212,255,0.15);color:var(--text2);font-size:12px;line-height:1.65"></div>
       </div>
       <div class="indices-row" id="home-indices">
         <div class="index-chip"><div class="index-name">S&P 500</div><div class="index-val skel" style="height:18px;width:60px;border-radius:5px"></div></div>
@@ -634,6 +646,7 @@ body.light .search-input{color:#0A0A18}
         </div>
         <span style="color:var(--text3);font-size:20px">›</span>
       </div>
+      <div id="concentration-warning"></div>
       <canvas id="portfolio-chart" height="120" style="width:100%;display:none;border-radius:14px;background:var(--glass);border:1px solid var(--border);margin-bottom:14px"></canvas>
       <div id="tax-efficiency-card" style="display:none;margin-bottom:14px"></div>
       <div class="card" style="padding:14px 16px;margin-bottom:14px">
@@ -869,6 +882,7 @@ body.light .search-input{color:#0A0A18}
           <div class="rec-metric" style="flex:1"><div class="rec-metric-label">30d Change</div><div class="rec-metric-val" id="modal-30d">—</div></div>
           <div class="rec-metric" style="flex:1"><div class="rec-metric-label">Sector</div><div class="rec-metric-val" id="modal-sector">—</div></div>
         </div>
+        <div id="modal-alert-row" style="margin-bottom:14px"></div>
         <div class="section-title" style="font-size:14px">Recent News</div>
         <div id="modal-news"><div style="color:var(--text3);font-size:12px">Loading news…</div></div>
       </div>
@@ -1606,7 +1620,7 @@ function getAccounts() {
 function saveAccounts(obj) { ls.setItem('da_accounts', JSON.stringify(obj)); }
 
 // Keys we persist per-account
-const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency','da_xp','da_streak','da_last_open','da_postmortems','da_trade_journal'];
+const PROFILE_KEYS = ['da_name','da_exp','da_risk','da_holdings','da_watchlist','da_fh','da_an','da_groq','da_theme','da_pick_history','da_ob_done','da_currency','da_xp','da_streak','da_last_open','da_postmortems','da_trade_journal','da_alerts'];
 
 function saveCurrentProfile() {
   const email = ls.getItem('da_current_email');
@@ -1826,6 +1840,8 @@ function initHome() {
     renderHomeIndices();
     renderHomeMovers();
     renderHomeGauge();
+    renderAlphaScore();
+    checkPriceAlerts();
     fetchNews().then(news=>{ State.news=news; renderHomeNews(); });
 
     // Then run AI picks (may take longer — fetches 40 quotes + recommendations + candles)
@@ -1868,6 +1884,152 @@ function renderHomePortfolio() {
   document.getElementById('home-portfolio-val').textContent = fmtPrice(total);
   const sign = dayChg>=0?'+':'';
   document.getElementById('home-portfolio-change').innerHTML = `<span class="pill ${dayChg>=0?'green':'red'}">${sign}${fmtPrice(Math.abs(dayChg))} (${sign}${dayPct.toFixed(2)}%) today</span>`;
+}
+
+/* ====================================================
+   ALPHA SCORE — daily 0-100 portfolio grade
+   ==================================================== */
+let _alphaScoreParts = null;
+
+function computeAlphaScore() {
+  if (!State.holdings.length) return null;
+  const enriched = State.holdings.map(h => {
+    const q = State.quotes[h.symbol];
+    const info = SYMBOL_INFO[h.symbol] || {sector:'Other'};
+    const price = q ? q.c : h.avgCost;
+    return {...h, sector: info.sector, price, value: h.shares*price, cost: h.shares*h.avgCost, dayPct: q ? (q.dp ?? 0) : 0};
+  });
+  const total = enriched.reduce((s,h)=>s+h.value,0) || 1;
+  const totalCost = enriched.reduce((s,h)=>s+h.cost,0) || 1;
+
+  // 1. Diversification (0-30): holdings count + sector spread
+  const sectors = {};
+  enriched.forEach(h => { sectors[h.sector] = (sectors[h.sector]||0) + h.value; });
+  const maxSectorPct = Math.max(...Object.values(sectors)) / total;
+  const countScore = Math.min(15, enriched.length * 3);
+  const spreadScore = maxSectorPct > 0.6 ? 3 : maxSectorPct > 0.45 ? 8 : maxSectorPct > 0.3 ? 12 : 15;
+  const divScore = countScore + spreadScore;
+
+  // 2. Overall P&L (0-30)
+  const pnlPct = (total - totalCost) / totalCost * 100;
+  const pnlScore = pnlPct >= 20 ? 30 : pnlPct >= 10 ? 25 : pnlPct >= 3 ? 20 : pnlPct >= 0 ? 15 : pnlPct >= -5 ? 10 : pnlPct >= -15 ? 5 : 2;
+
+  // 3. Today's momentum (0-20)
+  const dayPct = enriched.reduce((s,h)=>s+h.dayPct*(h.value/total),0);
+  const momScore = dayPct >= 1.5 ? 20 : dayPct >= 0.5 ? 16 : dayPct >= 0 ? 12 : dayPct >= -1 ? 8 : dayPct >= -2.5 ? 4 : 1;
+
+  // 4. AI pick track record (0-10)
+  let trScore = 5;
+  const hist = getPickHistory().filter(h=>h.settled&&h.returnPct!==null);
+  if (hist.length >= 3) {
+    const wr = hist.filter(h=>h.returnPct>0).length/hist.length;
+    trScore = wr >= 0.7 ? 10 : wr >= 0.5 ? 7 : 3;
+  }
+
+  // 5. Engagement streak (0-10)
+  const streak = parseInt(ls.getItem('da_streak')||'0');
+  const stScore = Math.min(10, streak * 2);
+
+  const score = Math.round(divScore + pnlScore + momScore + trScore + stScore);
+  _alphaScoreParts = {score, divScore, pnlScore, momScore, trScore, stScore, pnlPct, dayPct, maxSectorPct, holdings: enriched.length};
+  return _alphaScoreParts;
+}
+
+function renderAlphaScore() {
+  const badge = document.getElementById('alpha-score-badge');
+  if (!badge) return;
+  const parts = computeAlphaScore();
+  if (!parts) { badge.style.display = 'none'; return; }
+  badge.style.display = 'block';
+  const col = parts.score >= 75 ? 'var(--green)' : parts.score >= 50 ? 'var(--gold)' : 'var(--red)';
+  const ring = document.getElementById('alpha-score-ring');
+  ring.style.stroke = col;
+  ring.style.strokeDashoffset = (138.2 * (1 - parts.score/100)).toFixed(1);
+  document.getElementById('alpha-score-num').textContent = parts.score;
+}
+
+async function explainAlphaScore() {
+  const el = document.getElementById('alpha-score-explain');
+  if (!el || !_alphaScoreParts) return;
+  if (el.style.display === 'block') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  const p = _alphaScoreParts;
+  const local = `Diversification ${p.divScore}/30 · P&L ${p.pnlScore}/30 · Today ${p.momScore}/20 · AI record ${p.trScore}/10 · Streak ${p.stScore}/10`;
+  if (!Keys.groq && !Keys.anthropic) { el.textContent = local; return; }
+  el.innerHTML = `<div style="color:var(--text3);font-size:11px;margin-bottom:5px">${local}</div><span style="color:var(--blue)">Alpha is analysing…</span>`;
+  const prompt = `You are Alpha, an AI portfolio coach. The user's daily Alpha Score is ${p.score}/100.
+Breakdown: diversification ${p.divScore}/30 (${p.holdings} holdings, biggest sector ${(p.maxSectorPct*100).toFixed(0)}% of portfolio), overall P&L ${p.pnlScore}/30 (${p.pnlPct.toFixed(1)}%), today's momentum ${p.momScore}/20 (${p.dayPct.toFixed(2)}% today), AI pick record ${p.trScore}/10, engagement streak ${p.stScore}/10.
+In 2 short sentences: (1) the single biggest thing dragging the score down and one specific action to improve it, (2) one thing they're doing well. Direct, no fluff, no disclaimers.`;
+  try {
+    const text = await callClaude([{role:'user', content:prompt}]);
+    el.innerHTML = `<div style="color:var(--text3);font-size:11px;margin-bottom:5px">${local}</div>${text}`;
+  } catch(e) { el.textContent = local; }
+}
+
+/* ====================================================
+   PRICE ALERTS
+   ==================================================== */
+function getAlerts() {
+  try { return JSON.parse(ls.getItem('da_alerts')||'[]'); } catch(e) { return []; }
+}
+function saveAlerts(arr) { ls.setItem('da_alerts', JSON.stringify(arr)); saveCurrentProfile(); }
+
+function addAlert(symbol) {
+  const inp = document.getElementById('alert-price-input');
+  const price = parseFloat(inp ? inp.value : NaN);
+  if (isNaN(price) || price <= 0) { showToast('Enter a valid target price'); return; }
+  const q = State.quotes[symbol];
+  const cur = q ? q.c : null;
+  const dir = cur !== null && price < cur ? 'below' : 'above';
+  const alerts = getAlerts().filter(a => a.symbol !== symbol);
+  alerts.push({id:'a'+Date.now(), symbol, dir, price, created: new Date().toISOString().split('T')[0]});
+  saveAlerts(alerts);
+  showToast(`🔔 Alert set: ${symbol} ${dir} ${fmtPrice(price)}`);
+  renderAlertRow(symbol);
+}
+
+function removeAlert(symbol) {
+  saveAlerts(getAlerts().filter(a => a.symbol !== symbol));
+  showToast('Alert removed');
+  renderAlertRow(symbol);
+}
+
+function renderAlertRow(symbol) {
+  const el = document.getElementById('modal-alert-row');
+  if (!el) return;
+  const existing = getAlerts().find(a => a.symbol === symbol);
+  if (existing) {
+    el.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;background:rgba(255,184,0,0.07);border:1px solid rgba(255,184,0,0.18);border-radius:12px;padding:10px 13px">
+      <div style="color:var(--gold);font-size:12px;font-weight:600">🔔 Alert: ${existing.dir} ${fmtPrice(existing.price)}</div>
+      <button onclick="removeAlert('${symbol}')" style="background:none;border:none;color:var(--red);font-size:12px;font-weight:600;cursor:pointer">Remove</button>
+    </div>`;
+  } else {
+    el.innerHTML = `<div style="display:flex;gap:8px">
+      <input id="alert-price-input" class="form-input" type="number" step="any" min="0" placeholder="Alert me at price… ($)" style="margin:0;flex:1"/>
+      <button onclick="addAlert('${symbol}')" style="background:rgba(255,184,0,0.1);border:1px solid rgba(255,184,0,0.25);border-radius:10px;padding:0 16px;color:var(--gold);font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">🔔 Set</button>
+    </div>`;
+  }
+}
+
+function checkPriceAlerts() {
+  const alerts = getAlerts();
+  if (!alerts.length) return;
+  const remaining = [];
+  const fired = [];
+  alerts.forEach(a => {
+    const q = State.quotes[a.symbol];
+    if (!q) { remaining.push(a); return; }
+    const hit = a.dir === 'above' ? q.c >= a.price : q.c <= a.price;
+    if (hit) fired.push({...a, current: q.c}); else remaining.push(a);
+  });
+  if (!fired.length) return;
+  saveAlerts(remaining);
+  fired.forEach((f, i) => {
+    setTimeout(() => showToast(`🔔 ${f.symbol} is ${f.dir} ${fmtPrice(f.price)} — now ${fmtPrice(f.current)}`), i * 2600);
+  });
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    fired.forEach(f => { try { new Notification('Daily Alpha AI', {body: `${f.symbol} hit your alert: now ${fmtPrice(f.current)} (target ${f.dir} ${fmtPrice(f.price)})`}); } catch(e){} });
+  }
 }
 
 function renderHomeIndices() {
@@ -2832,6 +2994,17 @@ function renderPortfolio() {
       <span style="color:var(--text2);font-size:12px;flex:1">${sec}</span>
       <span style="color:var(--text1);font-size:12px;font-weight:700">${totalVal>0?((val/totalVal)*100).toFixed(1):0}%</span>
     </div>`).join('');
+  // Sector concentration warning
+  const cw = document.getElementById('concentration-warning');
+  if (cw) {
+    if (totalVal > 0 && maxShare > 0.45 && enriched.length >= 2) {
+      const topSector = entries[0][0];
+      cw.innerHTML = `<div style="background:rgba(255,159,10,0.08);border:1px solid rgba(255,159,10,0.22);border-radius:14px;padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:18px;flex-shrink:0">⚠️</span>
+        <div style="color:var(--orange);font-size:12px;line-height:1.5"><strong>${(maxShare*100).toFixed(0)}% of your portfolio is in ${topSector}.</strong> A single sector downturn would hit hard — consider diversifying.</div>
+      </div>`;
+    } else cw.innerHTML = '';
+  }
   // Bar chart & tax efficiency
   drawPortfolioBarChart(enriched);
   renderTaxEfficiency(enriched, totalVal);
@@ -3190,6 +3363,7 @@ function openStockDetail(symbol) {
   const info = SYMBOL_INFO[symbol] || {name:symbol, sector:'Other'};
   document.getElementById('modal-symbol').textContent = symbol;
   document.getElementById('modal-name').textContent = info.name;
+  renderAlertRow(symbol);
   document.getElementById('modal-sector').textContent = info.sector;
   const q = State.quotes[symbol];
   if (q) {
