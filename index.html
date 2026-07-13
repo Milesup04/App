@@ -841,6 +841,20 @@ body.light .search-input{color:#0A0A18}
           <span class="setting-val">3.0.0</span>
         </div>
       </div>
+      <div class="subsection-title">Data</div>
+      <div class="key-section" style="margin-bottom:14px">
+        <div class="setting-row" onclick="exportBackup()">
+          <div class="setting-icon" style="background:rgba(0,255,135,0.12)">💾</div>
+          <div style="flex:1"><div class="setting-label">Export Backup</div><div class="setting-sub">Download all your data as a file</div></div>
+          <span style="color:var(--text3);font-size:16px">›</span>
+        </div>
+        <div class="setting-row" onclick="document.getElementById('backup-import-input').click()">
+          <div class="setting-icon" style="background:rgba(0,212,255,0.12)">📥</div>
+          <div style="flex:1"><div class="setting-label">Restore Backup</div><div class="setting-sub">Import a previously exported file</div></div>
+          <span style="color:var(--text3);font-size:16px">›</span>
+        </div>
+        <input type="file" id="backup-import-input" accept=".json" style="display:none" onchange="importBackup(event)"/>
+      </div>
       <button class="signout-btn" onclick="signOut()">🚪 Sign Out</button>
     </div>
 
@@ -1668,7 +1682,10 @@ function showAuthPanel(mode) {
   _authMode = mode;
   welcome.style.display='none'; auth.style.display='flex';
   document.getElementById('auth-title').textContent = mode==='register' ? 'Create Account' : 'Sign In';
-  document.getElementById('auth-submit').textContent = mode==='register' ? 'Create Account →' : 'Sign In →';
+  const sb = document.getElementById('auth-submit');
+  sb.textContent = mode==='register' ? 'Create Account →' : 'Sign In →';
+  sb.disabled = false;
+  document.getElementById('auth-pw').value = '';
   document.getElementById('auth-name-row').style.display = mode==='register' ? 'block' : 'none';
   document.getElementById('auth-err').textContent='';
   document.getElementById('auth-switch').innerHTML = mode==='register'
@@ -1698,24 +1715,32 @@ async function authSubmit() {
       const name = (document.getElementById('auth-name').value||'').trim() || 'Investor';
       accounts[email] = { pwHash: hash, name, profile: {} };
       saveAccounts(accounts);
+      // Fresh start — clear any leftover data from a previous user on this device
+      PROFILE_KEYS.forEach(k=>ls.removeItem(k));
+      Object.keys(localStorage||{}).forEach(k => {
+        if (k.startsWith('da_ai_picks_') || k.startsWith('da_pick_prices_') || k.startsWith('da_watch_price_')) ls.removeItem(k);
+      });
       ls.setItem('da_current_email', email);
       ls.setItem('da_name', name);
-      ls.setItem('da_ob_done', '');  // clear so onboarding continues
-      ls.removeItem('da_ob_done');
       State.userName = name;
+      State.holdings=[]; State.watchlist=[]; State.chatHistory=[]; State.aiPicks=null;
       // Pre-fill name field and continue onboarding
       document.getElementById('ob-name').value = name;
+      btn.textContent='Create Account →'; btn.disabled=false;
       obShowStep(1);
+      obCheckNext();
     } else {
       if (!accounts[email]) { errEl.textContent='No account found. Create one first.'; btn.textContent='Sign In →'; btn.disabled=false; return; }
       if (accounts[email].pwHash !== hash) { errEl.textContent='Incorrect password.'; btn.textContent='Sign In →'; btn.disabled=false; return; }
       ls.setItem('da_current_email', email);
       loadProfile(email);
+      btn.textContent='Sign In →'; btn.disabled=false;
       if (!ls.getItem('da_ob_done')) {
         // Account exists but no profile yet — run onboarding
         State.userName = accounts[email].name||'';
         document.getElementById('ob-name').value = State.userName;
         obShowStep(1);
+        obCheckNext();
       } else {
         launchApp();
       }
@@ -1756,11 +1781,6 @@ function launchApp() {
   setTimeout(checkWatchlistAlerts, 3000);
   setTimeout(checkDailyStreak, 800);
 }
-document.getElementById('screen-onboarding').querySelector('.btn-primary:last-of-type') && null;
-document.addEventListener('DOMContentLoaded',()=>{
-  const b = document.querySelector('#ob-6 .btn-primary');
-  if(b) b.onclick = launchApp;
-});
 
 // Save profile when app goes to background (iOS) or tab closes
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveCurrentProfile(); });
@@ -2177,7 +2197,7 @@ function renderHomeRecs() {
 function getPickHistory() {
   try { return JSON.parse(ls.getItem('da_pick_history')||'[]'); } catch(e) { return []; }
 }
-function savePickHistory(h) { ls.setItem('da_pick_history', JSON.stringify(h.slice(-60))); } // keep last 60 entries
+function savePickHistory(h) { ls.setItem('da_pick_history', JSON.stringify(h.slice(-60))); saveCurrentProfile(); } // keep last 60 entries
 
 // Called after quotes load — record outcome of any pending picks
 function settlePicks() {
@@ -3280,12 +3300,52 @@ function toggleSetting(key) {
   else showToast(key.charAt(0).toUpperCase()+key.slice(1)+' '+(toggleStates[key]?'enabled':'disabled'));
 }
 
+/* ====================================================
+   BACKUP / RESTORE
+   ==================================================== */
+function exportBackup() {
+  saveCurrentProfile();
+  const data = {};
+  Object.keys(localStorage||{}).forEach(k => { if (k.startsWith('da_')) data[k] = ls.getItem(k); });
+  const payload = { app:'DailyAlphaAI', version:1, exported:new Date().toISOString(), data };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'daily-alpha-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+  showToast('💾 Backup exported');
+}
+
+function importBackup(event) {
+  const file = event.target.files && event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const payload = JSON.parse(reader.result);
+      if (!payload || payload.app !== 'DailyAlphaAI' || !payload.data) { showToast('Not a valid Daily Alpha backup file'); return; }
+      if (!confirm('Restore this backup? It will replace the data currently on this device.')) return;
+      Object.entries(payload.data).forEach(([k,v]) => { if (k.startsWith('da_')) ls.setItem(k, v); });
+      showToast('✓ Backup restored — reloading…');
+      setTimeout(() => location.reload(), 900);
+    } catch(e) { showToast('Could not read backup file'); }
+  };
+  reader.readAsText(file);
+}
+
 function signOut() {
   if (!confirm('Sign out? Your data is saved to your account and will be restored when you sign back in.')) return;
   // Save current state to account before clearing
   saveCurrentProfile();
-  ['da_fh','da_an','da_ob_done','da_name','da_exp','da_risk','da_holdings','da_watchlist','da_current_email','da_theme'].forEach(k=>ls.removeItem(k));
-  State.userName=''; State.chatHistory=[]; State.quotes={};
+  PROFILE_KEYS.forEach(k=>ls.removeItem(k));
+  ls.removeItem('da_current_email');
+  Object.keys(localStorage||{}).forEach(k => {
+    if (k.startsWith('da_ai_picks_') || k.startsWith('da_pick_prices_') || k.startsWith('da_watch_price_')) ls.removeItem(k);
+  });
+  State.userName=''; State.chatHistory=[]; State.quotes={}; State.holdings=[]; State.watchlist=[]; State.aiPicks=null;
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.getElementById('screen-onboarding').classList.add('active');
   document.getElementById('navbar').style.display='none';
@@ -3319,6 +3379,7 @@ updateClock();
 function toggleTheme() {
   const isLight = document.body.classList.toggle('light');
   ls.setItem('da_theme', isLight ? 'light' : 'dark');
+  saveCurrentProfile();
   document.getElementById('theme-toggle-btn').textContent = isLight ? '☀️' : '🌙';
 }
 
@@ -3812,14 +3873,6 @@ async function checkWatchlistAlerts() {
 /* ====================================================
    INIT
    ==================================================== */
-// Patch ob-6 finish button
-(function(){
-  const step6 = document.getElementById('ob-6');
-  if(step6){
-    const btn = step6.querySelector('.btn-primary');
-    if(btn) btn.onclick = launchApp;
-  }
-})();
 
 /* ====================================================
    DISCLAIMER MODAL
