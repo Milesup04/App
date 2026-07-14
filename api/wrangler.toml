@@ -1,0 +1,7 @@
+name = "daily-alpha-api"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Secrets (set via CLI, never commit them):
+#   wrangler secret put FINNHUB_KEY
+#   wrangler secret put GROQ_KEY
